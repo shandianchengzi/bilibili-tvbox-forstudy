@@ -127,3 +127,11 @@ jobs:
       - name: Deploy verified site
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Checkout deployment verifier
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify published import URL and native plugin
+        run: python3 scripts/check_deployment.py

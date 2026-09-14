@@ -2,7 +2,7 @@
 
 面向 TVBox 的 Bilibili 原生 Java 视频源。GitHub Pages 托管订阅与插件，GitHub Actions 定时更新公开视频目录；账号登录、私人数据与实时播放均在 TVBox 设备上完成。
 
-**订阅地址（仓库启用 Pages 且部署成功后可用）：**
+**订阅地址：**
 
 ```text
 https://shandianchengzi.github.io/bilibili-tvbox-forstudy/tvbox.json
