@@ -37,6 +37,7 @@ public final class SearchRoutingTest {
         preservesExplicitIds();
         validatesMediaSearchParameters();
         preparesAnonymousVisitor();
+        normalizesOnlyDeclaredEmptyShows();
         System.out.println("SearchRoutingTest: " + assertions + " assertions passed");
         if ("1".equals(System.getenv("BILI_SEARCH_LIVE_SMOKE"))) liveSmoke();
     }
@@ -66,8 +67,29 @@ public final class SearchRoutingTest {
 
     private static JSONArray liveRows(JSONObject data, String kind) {
         JSONArray rows = data.optJSONArray("result");
+        if (rows == null || rows.length() == 0) {
+            List<String> keys = new ArrayList<>();
+            java.util.Iterator<String> names = data.keys();
+            while (names.hasNext()) {
+                String name = names.next();
+                keys.add(name.matches("[A-Za-z0-9_]{1,60}") ? name : "<nonstandard-key>");
+            }
+            Collections.sort(keys);
+            System.out.println("SearchRoutingTest live shape: type=" + kind + " normalized_data_keys=" + keys
+                    + " numResults=" + counter(data, "numResults") + " numPages=" + counter(data, "numPages")
+                    + " page=" + counter(data, "page"));
+        }
         check(rows != null, "Live " + kind + " response has a result array");
         return rows;
+    }
+
+    /** Diagnostic counters cannot echo arbitrary provider strings or response bodies. */
+    private static String counter(JSONObject data, String key) {
+        if (!data.has(key)) return "<missing>";
+        Object value = data.opt(key);
+        if (value == null || value == JSONObject.NULL) return "<null>";
+        if (value instanceof Number && value.toString().matches("-?[0-9]{1,12}")) return value.toString();
+        return "<" + value.getClass().getSimpleName() + ">";
     }
 
     private static boolean blocked(Exception failure) {
@@ -206,6 +228,60 @@ public final class SearchRoutingTest {
         client.searchMedia("media_ft", KEYWORD, 1);
         equal(Arrays.asList("/x/frontend/finger/spi", "/x/web-interface/wbi/search/type"), paths,
                 "Licensed-show search prepares the visitor through the same API as uploader search");
+    }
+
+    private static void normalizesOnlyDeclaredEmptyShows() throws Exception {
+        JSONObject omitted = new JSONObject().put("numResults", 0).put("numPages", 0);
+        JSONObject nullable = new JSONObject().put("numResults", 0).put("numPages", 0)
+                .put("page", 1).put("result", JSONObject.NULL);
+        for (JSONObject payload : Arrays.asList(omitted, nullable)) {
+            Fixture fixture = new Fixture("media", KEYWORD, 1);
+            fixture.reply("media_ft", payload);
+            JSONObject result = fixture.client.searchMedia("media_ft", KEYWORD, 1);
+            check(result.optJSONArray("result") != null && result.getJSONArray("result").length() == 0,
+                    "Explicit zero counts normalize an omitted or null official-search result");
+            equal(0, result.getInt("numResults"), "Normalization preserves the provider result count");
+            equal(0, result.getInt("numPages"), "Normalization preserves the provider page count");
+            equal(payload.has("page"), result.has("page"), "A page field is optional and is not invented");
+            fixture.complete();
+        }
+        Fixture empty = new Fixture("media", KEYWORD, 1);
+        empty.reply("media_ft", omitted);
+        empty.reply("media_bangumi", nullable);
+        JSONObject result = empty.search();
+        ids(result);
+        check(!result.has("msg"), "Legitimate empty results are not displayed as a loading error");
+        equal(1, result.getInt("pagecount"), "Zero-result official searches do not advertise a next page");
+        empty.complete();
+
+        List<JSONObject> malformed = Arrays.asList(
+                new JSONObject(),
+                new JSONObject().put("numResults", 0),
+                new JSONObject().put("numPages", 0),
+                new JSONObject().put("numResults", 2).put("numPages", 0),
+                new JSONObject().put("numResults", 0).put("numPages", 1),
+                new JSONObject().put("numResults", -1).put("numPages", 0),
+                new JSONObject().put("numResults", 0).put("numPages", 0.5),
+                new JSONObject().put("numResults", "0").put("numPages", 0),
+                new JSONObject().put("numResults", JSONObject.NULL).put("numPages", 0),
+                new JSONObject().put("numResults", 0).put("numPages", 0).put("result", "unexpected"),
+                new JSONObject().put("numResults", 0).put("numPages", 0).put("result", new JSONObject()));
+        for (JSONObject payload : malformed) {
+            Fixture fixture = new Fixture("media", KEYWORD, 1);
+            fixture.reply("media_ft", payload);
+            JSONObject invalid = fixture.client.searchMedia("media_ft", KEYWORD, 1);
+            check(invalid.optJSONArray("result") == null,
+                    "Missing, nonzero, fractional or mistyped counters/results cannot become a false empty success");
+            fixture.complete();
+        }
+        Fixture failed = new Fixture("media", KEYWORD, 1);
+        failed.reply("media_ft", malformed.get(0));
+        failed.reply("media_bangumi", malformed.get(3));
+        JSONObject error = failed.search();
+        check(error.getJSONArray("list").getJSONObject(0).getString("vod_id").startsWith("notice:"),
+                "Two malformed result shapes still fail without uploader fallback");
+        check(!error.optString("msg").isEmpty(), "Malformed provider responses retain a visible error");
+        failed.complete();
     }
 
     private static JSONObject season(long id) throws Exception {

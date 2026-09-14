@@ -2,6 +2,7 @@ package com.github.catvod.spider.bili;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -165,7 +166,15 @@ public final class BiliClient {
         params.put("search_type", kind);
         params.put("keyword", keyword == null ? "" : keyword.trim());
         params.put("page", String.valueOf(Math.max(1, page)));
-        return get("/x/web-interface/wbi/search/type", params);
+        JSONObject data = get("/x/web-interface/wbi/search/type", params);
+        // Empty official-search responses may omit result or return null. Require both
+        // explicit integer zero counts; malformed or nonempty responses stay invalid.
+        if (data.isNull("result")
+                && data.opt("numResults") instanceof Number && data.opt("numPages") instanceof Number
+                && "0".equals(String.valueOf(data.opt("numResults")))
+                && "0".equals(String.valueOf(data.opt("numPages"))))
+            data.put("result", new JSONArray());
+        return data;
     }
 
     /** Call off the main thread; display the returned URL as a QR image locally. */
