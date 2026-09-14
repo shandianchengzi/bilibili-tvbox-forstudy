@@ -65,11 +65,21 @@ public final class PlaybackQualityTest {
     }
 
     private static void testLines() throws Exception {
-        String[] names = {"Bilibili 视频", "合集 · 芯片设计", "Bilibili 正片"};
+        String[] names = {"Bilibili 视频", "合集 · 芯片设计", "Bilibili 正片", "花絮"};
         String[] lines = {
                 "1. 上集$play:BV1234567890:11#2. 下集$play:BV1234567890:12",
                 "1. 工程实践$play:BV2234567890:21#2. 设计复盘$play:BV3234567890:0",
-                "第1集$playep:31#第2集$playep:32"
+                "第1集$playep:31#第2集$playep:32",
+                "幕后回顾$playep:32"
+        };
+        String[] expectedEpisodes = {
+                "Bilibili 视频 · 1. 上集$play:BV1234567890:11",
+                "Bilibili 视频 · 2. 下集$play:BV1234567890:12",
+                "合集 · 芯片设计 · 1. 工程实践$play:BV2234567890:21",
+                "合集 · 芯片设计 · 2. 设计复盘$play:BV3234567890:0",
+                "Bilibili 正片 · 第1集$playep:31",
+                "Bilibili 正片 · 第2集$playep:32",
+                "花絮 · 幕后回顾$playep:32"
         };
         String originalContent = "BV 号：BV1234567890\n发布时间：2026-09-14\n播放量：1,234 次\n原始简介";
         JSONObject vod = new JSONObject().put("vod_play_from", String.join("$$$", names))
@@ -77,39 +87,65 @@ public final class PlaybackQualityTest {
         PlaybackQuality.addChoices(vod, data());
         String[] resultNames = vod.getString("vod_play_from").split("\\$\\$\\$", -1);
         String[] resultLines = vod.getString("vod_play_url").split("\\$\\$\\$", -1);
-        check(resultNames.length == 12 && resultLines.length == 12,
-                "Each original video, collection, and PGC line needs automatic plus three quality lines");
+        check(Arrays.equals(resultNames, new String[]{"自动", "4K", "1080P", "720P"}),
+                "Each quality must have exactly one concise line without a source prefix");
+        check(resultLines.length == resultNames.length, "Quality names and episode lists must stay aligned");
+        check(resultLines[0].equals(String.join("#", expectedEpisodes)),
+                "Automatic line must preserve every section, part, episode, and repeated-ID extra in order");
         int[] qualities = {120, 80, 64};
-        for (int section = 0; section < names.length; section++) {
-            int start = section * 4;
-            check(resultNames[start].equals(names[section] + " · 自动"), "Automatic line must retain its section identity");
-            check(resultLines[start].equals(lines[section]), "Automatic playback IDs must remain backward compatible");
-            String[] oldEpisodes = lines[section].split("#", -1);
-            for (int q = 0; q < qualities.length; q++) {
-                check(resultNames[start + q + 1].equals(names[section] + " · " + PlaybackQuality.name(qualities[q])),
-                        "Manual line lost its quality label or original section");
-                String[] newEpisodes = resultLines[start + q + 1].split("#", -1);
-                check(newEpisodes.length == oldEpisodes.length, "Manual selection dropped a part or episode");
-                for (int episode = 0; episode < newEpisodes.length; episode++) {
-                    check(newEpisodes[episode].equals(oldEpisodes[episode] + "@qn=" + qualities[q]),
-                            "Episode label or base playback ID changed when adding a quality");
-                    String newId = newEpisodes[episode].substring(newEpisodes[episode].indexOf('$') + 1);
-                    String oldId = oldEpisodes[episode].substring(oldEpisodes[episode].indexOf('$') + 1);
-                    check(PlaybackQuality.baseId(newId).equals(oldId), "Quality ID failed to round-trip for a BV or PGC episode");
-                    check(PlaybackQuality.requested(newId) == qualities[q], "Selected quality was not encoded in every episode");
-                }
+        for (int q = 0; q < qualities.length; q++) {
+            String[] newEpisodes = resultLines[q + 1].split("#", -1);
+            check(newEpisodes.length == expectedEpisodes.length, "Manual selection dropped a part or episode");
+            for (int episode = 0; episode < newEpisodes.length; episode++) {
+                check(newEpisodes[episode].equals(expectedEpisodes[episode] + "@qn=" + qualities[q]),
+                        "Episode section, label, order, or playback ID changed when adding a quality");
+                String newId = newEpisodes[episode].substring(newEpisodes[episode].indexOf('$') + 1);
+                String oldId = expectedEpisodes[episode].substring(expectedEpisodes[episode].indexOf('$') + 1);
+                check(PlaybackQuality.baseId(newId).equals(oldId), "Quality ID failed to round-trip for a BV or PGC episode");
+                check(PlaybackQuality.requested(newId) == qualities[q], "Selected quality was not encoded in every episode");
             }
         }
         check(vod.getString("vod_content").startsWith(originalContent), "Quality instructions must preserve video metadata and description");
         check(vod.getString("vod_content").contains("播放线路"), "Viewer needs a visible instruction for selecting quality");
 
-        JSONObject unchanged = new JSONObject().put("vod_play_from", names[0]).put("vod_play_url", lines[0]);
-        PlaybackQuality.addChoices(unchanged, new JSONObject().put("accept_quality", new JSONArray().put(120)));
-        check(unchanged.getString("vod_play_from").equals(names[0]) && unchanged.getString("vod_play_url").equals(lines[0]),
-                "Failed or unusable quality discovery must preserve original automatic playback");
-        JSONObject mismatch = new JSONObject().put("vod_play_from", "视频$$$正片").put("vod_play_url", lines[0]);
-        expect(IllegalArgumentException.class, () -> PlaybackQuality.addChoices(mismatch, data()),
-                "Mismatched TVBox sections must not silently corrupt episode routing");
+        JSONObject single = new JSONObject().put("vod_play_from", names[0]).put("vod_play_url", lines[0]);
+        PlaybackQuality.addChoices(single, direct(32));
+        check(single.getString("vod_play_from").equals("自动$$$480P"), "A single source also needs concise quality names");
+        check(single.getString("vod_play_url").equals(lines[0] + "$$$1. 上集$play:BV1234567890:11@qn=32"
+                + "#2. 下集$play:BV1234567890:12@qn=32"),
+                "Single-source episode labels must remain unchanged");
+
+        for (JSONObject unavailable : new JSONObject[]{null, new JSONObject(),
+                new JSONObject().put("accept_quality", new JSONArray().put(120)), data().put("is_drm", true)}) {
+            JSONObject fallback = new JSONObject().put("vod_play_from", String.join("$$$", names))
+                    .put("vod_play_url", String.join("$$$", lines)).put("vod_content", originalContent);
+            PlaybackQuality.addChoices(fallback, unavailable);
+            check(fallback.getString("vod_play_from").equals("自动"),
+                    "Failed or unusable quality discovery must still leave exactly one automatic line");
+            check(fallback.getString("vod_play_url").equals(String.join("#", expectedEpisodes)),
+                    "Automatic fallback must preserve all sections and their original playback IDs");
+            check(fallback.getString("vod_content").equals(originalContent),
+                    "Automatic fallback must preserve metadata and not promise unavailable choices");
+        }
+        JSONObject singleFallback = new JSONObject().put("vod_play_from", names[0]).put("vod_play_url", lines[0]);
+        PlaybackQuality.addChoices(singleFallback, null);
+        check(singleFallback.getString("vod_play_from").equals("自动")
+                        && singleFallback.getString("vod_play_url").equals(lines[0]),
+                "Single-source fallback must preserve episode names while shortening the line label");
+
+        for (JSONObject response : new JSONObject[]{data(), null}) {
+            JSONObject mismatch = new JSONObject().put("vod_play_from", "视频$$$正片").put("vod_play_url", lines[0]);
+            expect(IllegalArgumentException.class, () -> PlaybackQuality.addChoices(mismatch, response),
+                    "Mismatched TVBox sections must be rejected even when quality discovery failed");
+            for (String malformed : new String[]{"", "标题", "$playep:31", "标题$", "标题$playep:31$extra",
+                    "标题$playep:31#", "标题$playep:31@qn=80@qn=64"}) {
+                JSONObject invalid = new JSONObject().put("vod_play_from", "视频").put("vod_play_url", malformed);
+                expect(IllegalArgumentException.class, () -> PlaybackQuality.addChoices(invalid, response),
+                        "Malformed episode syntax must not silently corrupt quality routing");
+                check(invalid.getString("vod_play_from").equals("视频") && invalid.getString("vod_play_url").equals(malformed),
+                        "A rejected source must not be partially rewritten");
+            }
+        }
     }
 
     private static void testIds() throws Exception {

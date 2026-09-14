@@ -14,6 +14,7 @@ import com.github.catvod.spider.bili.LocalServer;
 import com.github.catvod.spider.bili.VideoMetadata;
 import com.github.catvod.spider.bili.QrLoginDialog;
 import com.github.catvod.spider.bili.QrPoller;
+import com.github.catvod.spider.bili.Recommendations;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
@@ -33,6 +34,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,6 +47,8 @@ import java.util.regex.Pattern;
 public class BiliStudy extends Spider {
     private static final String DEFAULT_BASE = "https://shandianchengzi.github.io/bilibili-tvbox-forstudy/";
     private static final int PAGE_SIZE = 20;
+    private static final String[] PGC_TYPES = {"2", "7", "3", "4", "5", "1"};
+    private static final String[] PGC_NAMES = {"电影", "综艺", "纪录片", "国创", "剧集", "番剧"};
     private static final AtomicLong LOGIN_GENERATION = new AtomicLong();
     private static volatile String qrPicture = "";
     private static volatile String qrMessage = "";
@@ -58,6 +66,9 @@ public class BiliStudy extends Spider {
     private JSONObject interests;
     private JSONObject catalog;
     private long loadedAt;
+    private JSONArray mediaSnapshot;
+    private long mediaLoadedAt;
+    private long mediaAttemptedAt;
     private final Map<Integer, String> dynamicCursors = new ConcurrentHashMap<>();
     private final Map<Integer, JSONObject> historyCursors = new ConcurrentHashMap<>();
 
@@ -76,15 +87,15 @@ public class BiliStudy extends Spider {
     public String homeContent(boolean filter) throws Exception {
         JSONArray classes = new JSONArray();
         JSONObject filters = new JSONObject();
-        classes.put(category("account", "账号 / 扫码登录"));
+        if ("account".equals(mode))
+            return new JSONObject().put("class", classes).put("filters", filters).toString();
+        classes.put(category("all", "全部"));
         if ("media".equals(mode)) {
             classes.put(category("dynamic", "动态"));
             classes.put(category("favorites", "收藏夹"));
             classes.put(category("history", "历史记录"));
-            String[] ids = {"2", "7", "3", "4", "5", "1"};
-            String[] names = {"电影", "综艺", "纪录片", "国创", "剧集", "番剧"};
-            for (int i = 0; i < ids.length; i++) classes.put(category("pgc:" + ids[i], names[i]));
-            if (client.hasSession()) {
+            for (int i = 0; i < PGC_TYPES.length; i++) classes.put(category("pgc:" + PGC_TYPES[i], PGC_NAMES[i]));
+            if (hasSession()) {
                 try {
                     JSONArray folders = favoriteFolders();
                     JSONArray values = new JSONArray();
@@ -126,16 +137,23 @@ public class BiliStudy extends Spider {
     }
 
     public String homeVideoContent() throws Exception {
-        return page(new JSONArray().put(card("auth:login", "扫码登录 Bilibili", "扫码后在手机确认；Cookie 仅存本机", "")), 1, false).toString();
+        try {
+            if ("account".equals(mode)) return accountCards().toString();
+            JSONArray videos = recommendationCards();
+            // TVBox's home callback has no page argument: return the complete current snapshot.
+            return new JSONObject().put("list", videos).put("page", 1).put("pagecount", 1)
+                    .put("limit", videos.length()).put("total", videos.length()).toString();
+        } catch (Exception e) { return errorPage(e).toString(); }
     }
 
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
             int p = Math.max(1, Integer.parseInt(pg));
             Map<String, String> f = extend == null ? new HashMap<String, String>() : extend;
-            if ("account".equals(tid)) return accountCards().toString();
-            if (Arrays.asList("dynamic", "favorites", "history").contains(tid) && !client.hasSession())
-                return page(new JSONArray().put(card("auth:login", "请先扫码登录", "进入详情查看二维码", "")), 1, false).toString();
+            if ("account".equals(mode)) return "account".equals(tid) ? accountCards().toString() : page(new JSONArray(), p, false).toString();
+            if ("account".equals(tid) || (Arrays.asList("dynamic", "favorites", "history").contains(tid) && !hasSession()))
+                return accountNotice().toString();
+            if ("all".equals(tid)) return Recommendations.page(recommendationCards(), p, PAGE_SIZE).toString();
             if (tid.startsWith("pgc:")) return pgc(tid.substring(4), p).toString();
             if ("dynamic".equals(tid)) return dynamics(p).toString();
             if ("favorites".equals(tid)) return favorites(p, f.get("fid")).toString();
@@ -150,6 +168,7 @@ public class BiliStudy extends Spider {
     public String searchContent(String key, boolean quick, String pg) throws Exception {
         try {
             int p = Math.max(1, Integer.parseInt(pg));
+            if ("account".equals(mode)) return page(new JSONArray(), p, false).toString();
             Matcher bv = Pattern.compile("BV[0-9A-Za-z]{10}").matcher(key);
             Matcher ep = Pattern.compile("(?:^|/)(ep|ss)([0-9]+)").matcher(key.trim());
             if (bv.find()) return page(new JSONArray().put(card("video:" + bv.group(), bv.group(), "打开视频", "")), 1, false).toString();
@@ -176,7 +195,9 @@ public class BiliStudy extends Spider {
         try {
             String id = ids.get(0);
             JSONObject vod;
-            if (id.startsWith("auth:")) vod = authDetail(id.substring(5));
+            if (id.startsWith("auth:")) vod = "account".equals(mode) ? authDetail(id.substring(5))
+                    : card("notice:请进入首页的 Bilibili 扫码登录 卡片管理账号", "请进入 Bilibili 扫码登录", "统一账号入口", "")
+                        .put("vod_content", "返回源选择，进入 Bilibili 扫码登录 卡片；登录状态在全部 Bilibili 模块间共享。");
             else if (id.startsWith("video:")) vod = videoDetail(id.substring(6));
             else if (id.startsWith("season:")) vod = seasonDetail("season_id", id.substring(7));
             else if (id.startsWith("ep:")) vod = seasonDetail("ep_id", id.substring(3));
@@ -227,6 +248,7 @@ public class BiliStudy extends Spider {
             PlaybackQuality.addChoices(vod, data);
         } catch (Exception ignored) {
             // A failed quality probe must not hide descriptions or the original episode list.
+            PlaybackQuality.addChoices(vod, null);
             vod.put("vod_content", vod.optString("vod_content")
                     + "\n\n暂时无法获取可选清晰度，仍可直接播放；需要手动选画质时请重新进入详情页。");
         }
@@ -241,9 +263,52 @@ public class BiliStudy extends Spider {
         JSONArray a = data.optJSONArray("list"), out = new JSONArray();
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject s = a.getJSONObject(i);
-            out.put(card("season:" + s.getString("season_id"), s.optString("title"), s.optString("index_show"), s.optString("cover")));
+            out.put(card("season:" + digits(s.optString("season_id")), s.optString("title"), s.optString("index_show"), s.optString("cover")));
         }
         return page(out, p, data.optInt("has_next", 0) == 1 || data.optBoolean("has_next", false));
+    }
+
+    private JSONArray recommendationCards() throws Exception {
+        if ("media".equals(mode)) return mediaRecommendations();
+        loadCatalog();
+        return searchCards(Recommendations.catalog(interests, catalog));
+    }
+
+    /** Six independent PGC queries share one wall-clock budget, keeping home responsive. */
+    private synchronized JSONArray mediaRecommendations() throws Exception {
+        long now = System.currentTimeMillis();
+        if (mediaSnapshot != null && now - mediaLoadedAt < 300000) return mediaSnapshot;
+        if (now - mediaAttemptedAt < 30000) {
+            if (mediaSnapshot != null && mediaSnapshot.length() > 0) return mediaSnapshot;
+            throw new IllegalStateException("影视推荐暂时不可用，请稍后刷新或进入电影、综艺等分类");
+        }
+        mediaAttemptedAt = now;
+        ExecutorService workers = Executors.newFixedThreadPool(PGC_TYPES.length, task -> {
+            Thread thread = new Thread(task, "bili-media-home");
+            thread.setDaemon(true);
+            return thread;
+        });
+        try {
+            List<Callable<JSONArray>> requests = new ArrayList<>();
+            for (String type : PGC_TYPES) requests.add(() -> pgc(type, 1).getJSONArray("list"));
+            List<Future<JSONArray>> completed = workers.invokeAll(requests, 8, TimeUnit.SECONDS);
+            List<JSONArray> groups = new ArrayList<>();
+            for (Future<JSONArray> future : completed) {
+                try { groups.add(future.isCancelled() ? new JSONArray() : future.get()); }
+                catch (Exception ignored) { groups.add(new JSONArray()); }
+            }
+            JSONArray fresh = Recommendations.interleave(groups, "vod_id");
+            if (fresh.length() == 0) {
+                if (mediaSnapshot != null && mediaSnapshot.length() > 0) return mediaSnapshot;
+                throw new IllegalStateException("影视推荐暂时不可用，请稍后刷新或进入电影、综艺等分类");
+            }
+            mediaSnapshot = fresh;
+            mediaLoadedAt = System.currentTimeMillis();
+            return mediaSnapshot;
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw failure;
+        } finally { workers.shutdownNow(); }
     }
 
     private JSONArray favoriteFolders() throws Exception {
@@ -413,9 +478,16 @@ public class BiliStudy extends Spider {
         return tracks;
     }
 
+    private boolean hasSession() { return client != null && client.hasSession(); }
+
+    private JSONObject accountNotice() throws Exception {
+        String message = "请返回源选择，进入 Bilibili 扫码登录 卡片登录账号";
+        return page(new JSONArray().put(card("notice:" + message, "请先在 Bilibili 扫码登录 中登录", "账号在各模块间共享", "")), 1, false);
+    }
+
     private JSONObject accountCards() throws Exception {
         return page(new JSONArray()
-            .put(card("auth:login", "扫码登录 / 重新登录", client.hasSession() ? "本机已保存登录信息" : "未登录", ""))
+            .put(card("auth:login", "扫码登录 / 重新登录", hasSession() ? "本机已保存登录信息" : "未登录", ""))
             .put(card("auth:status", "检查登录状态", "查看当前账号", ""))
             .put(card("auth:logout", "退出登录", "清除本机登录信息", "")), 1, false);
     }
@@ -596,7 +668,12 @@ public class BiliStudy extends Spider {
         return message.length() > 240 ? message.substring(0, 240) : message;
     }
     @SuppressWarnings("deprecation")
-    private static String clean(String s) { return Html.fromHtml(s == null ? "" : s).toString().trim(); }
+    private static String clean(String s) {
+        String value = s == null ? "" : s;
+        // Published catalog titles are already plain text; only API markup needs Android Html.
+        if (value.indexOf('<') < 0 && value.indexOf('&') < 0) return value.trim();
+        return Html.fromHtml(value).toString().trim();
+    }
     private static String label(String s) { return clean(s).replace('$', '＄').replace('#', '＃'); }
     private static boolean isBvid(String s) { return s != null && s.matches("BV[0-9A-Za-z]{10}"); }
     private static String checkedBvid(String s) { if (!isBvid(s)) throw new IllegalArgumentException("BV 编号无效"); return s; }

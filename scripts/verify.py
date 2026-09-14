@@ -19,6 +19,8 @@ ZHOU_SHEN_CATEGORIES = {
     "zhou_shen_interview": "采访", "zhou_shen_edit": "剪辑", "zhou_shen_funny": "搞笑",
     "zhou_shen_stage": "舞台", "zhou_shen_kabu": "卡布",
 }
+TVBOX_MODULES = {"media": "Bilibili 影视", "study": "Bilibili 合集",
+                 "zhou_shen": "Bilibili 周深", "account": "Bilibili 扫码登录"}
 
 
 def require(condition: bool, message: str) -> None:
@@ -124,6 +126,36 @@ def verify_catalog_pair(interests: object, catalog: object, label: str,
                 f"{label}: expected categories are missing or reordered")
 
 
+def verify_modules(sites: object, base: str) -> None:
+    require(isinstance(sites, list) and len(sites) == len(TVBOX_MODULES)
+            and all(isinstance(site, dict) for site in sites), "expected four distinct TVBox modules")
+    require(len({site.get("key") for site in sites}) == len(TVBOX_MODULES),
+            "expected four distinct TVBox modules")
+    modes = set()
+    for site in sites:
+        require(site.get("type") == 3 and site.get("api") == "csp_BiliStudy", "invalid native TVBox site entry")
+        extend = json.loads(site.get("ext", "{}"))
+        require(isinstance(extend, dict), "TVBox module extension must be an object")
+        validate_public_data(extend, "site.ext")
+        mode = extend.get("mode")
+        require(mode in TVBOX_MODULES, "invalid TVBox module mode")
+        modes.add(mode)
+        require(site.get("key") == f"bili_study_{mode}" and site.get("name") == TVBOX_MODULES[mode],
+                "TVBox module key or name is inconsistent")
+        content = mode != "account"
+        require(site.get("searchable") == int(content) and site.get("quickSearch") == 0,
+                "only content modules can participate in video search")
+        require(site.get("filterable") == int(content), "TVBox module filter availability is inconsistent")
+        if not content:
+            require(extend == {"mode": "account"}, "account module must not load content catalogs")
+            continue
+        prefix = "zhou-shen-" if mode == "zhou_shen" else ""
+        require(extend.get("catalog") == f"{base}/{prefix}catalog.json", "catalog URL is inconsistent")
+        require(extend.get("interests") == f"{base}/{prefix}interests.json", "interests URL is inconsistent")
+    require(modes == set(TVBOX_MODULES), "TVBox module modes missing")
+    require(sites[-1].get("key") == "bili_study_account", "account module must follow content modules")
+
+
 def verify_site(root: Path) -> dict[str, object]:
     for name in ("index.html", "tvbox.json", "interests.json", "catalog.json", "zhou-shen-interests.json",
                  "zhou-shen-catalog.json", "build-info.json", ".nojekyll"):
@@ -145,22 +177,8 @@ def verify_site(root: Path) -> dict[str, object]:
     require(info.get("jar", {}).get("sha256") == checksums["sha256"], "published SHA256 mismatch")
     require(info.get("jar", {}).get("file") == jar_name, "build info points to a different jar")
     require(checksums["sha256"][:16] in jar_name, "jar URL is not content-versioned")
-    sites = config.get("sites", [])
-    require(len(sites) == 3 and len({site.get("key") for site in sites}) == 3, "expected three distinct TVBox modules")
-    modes = set()
     base = spider_url.rsplit("/", 1)[0]
-    for site in sites:
-        require(site.get("type") == 3 and site.get("api") == "csp_BiliStudy", "invalid native TVBox site entry")
-        require(site.get("searchable") == 1, "all TVBox modules must retain video search")
-        extend = json.loads(site.get("ext", "{}"))
-        validate_public_data(extend, "site.ext")
-        mode = extend.get("mode")
-        modes.add(mode)
-        require(site.get("key") == f"bili_study_{mode}", "TVBox module key is inconsistent")
-        prefix = "zhou-shen-" if mode == "zhou_shen" else ""
-        require(extend.get("catalog") == f"{base}/{prefix}catalog.json", "catalog URL is inconsistent")
-        require(extend.get("interests") == f"{base}/{prefix}interests.json", "interests URL is inconsistent")
-    require(modes == {"media", "study", "zhou_shen"}, "TVBox module modes missing")
+    verify_modules(config.get("sites"), base)
     verify_catalog_pair(read_json(root / "interests.json"), read_json(root / "catalog.json"), "study")
     verify_catalog_pair(read_json(root / "zhou-shen-interests.json"),
                         read_json(root / "zhou-shen-catalog.json"), "zhou_shen", ZHOU_SHEN_CATEGORIES)

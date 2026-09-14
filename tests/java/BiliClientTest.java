@@ -47,6 +47,7 @@ public final class BiliClientTest {
         logoutDuringVerification();
         playerQualityTransactions();
         detailQualityProbe();
+        mediaRecommendationTransactions();
         if ("1".equals(System.getenv("BILI_QR_LIVE_SMOKE"))) liveQrSmoke();
         if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) reportLivePlaybackSmoke();
         System.out.println("BiliClientTest: " + assertions + " assertions passed");
@@ -365,7 +366,7 @@ public final class BiliClientTest {
         JSONObject vod = new JSONObject().put("vod_content", "Original description")
                 .put("vod_play_from", "视频").put("vod_play_url", "第一集$play:BV1xx411c7mD:123");
         JSONObject expanded = (JSONObject) choices.invoke(available.spider, vod);
-        check(expanded.getString("vod_play_from").contains("720P"), "Detail callback exposes the probed playable quality");
+        equal("自动$$$720P", expanded.getString("vod_play_from"), "Detail callback exposes only short quality names");
         check(expanded.getString("vod_play_url").contains("play:BV1xx411c7mD:123@qn=64"), "Detail callback binds exact quality to episode ID");
         check(expanded.getString("vod_content").startsWith("Original description"), "Quality choices preserve existing description");
         available.complete(1);
@@ -375,11 +376,51 @@ public final class BiliClientTest {
         vod = new JSONObject().put("vod_content", "Original description")
                 .put("vod_play_from", "视频").put("vod_play_url", "第一集$play:BV1xx411c7mD:123");
         JSONObject preserved = (JSONObject) choices.invoke(failed.spider, vod);
-        equal("视频", preserved.getString("vod_play_from"), "Failed quality probe preserves the original source line");
+        equal("自动", preserved.getString("vod_play_from"), "Failed quality probe still exposes only the automatic quality line");
         equal("第一集$play:BV1xx411c7mD:123", preserved.getString("vod_play_url"), "Failed quality probe preserves original episode IDs");
         check(preserved.getString("vod_content").startsWith("Original description"), "Failed quality probe preserves description");
         check(preserved.getString("vod_content").contains("重新进入详情页"), "Failed quality probe explains retry without hiding playback");
         failed.complete(1);
+    }
+
+    /** Exercise all six real PGC callback requests, without calling an external service. */
+    private static void mediaRecommendationTransactions() throws Exception {
+        List<FakeConnection> opened = java.util.Collections.synchronizedList(new ArrayList<>());
+        BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()), url -> {
+            Map<String, String> query = new LinkedHashMap<>();
+            for (String pair : url.getQuery().split("&")) {
+                String[] fields = pair.split("=", 2);
+                query.put(URLDecoder.decode(fields[0], "UTF-8"), URLDecoder.decode(fields[1], "UTF-8"));
+            }
+            if (!url.getPath().equals("/pgc/season/index/result") || !"1".equals(query.get("page")))
+                throw new AssertionError("Recommendations must request the public PGC first pages");
+            try {
+                int type = Integer.parseInt(query.get("season_type"));
+                JSONArray rows = new JSONArray().put(new JSONObject().put("season_id", type)
+                        .put("title", "Type " + type).put("cover", "https://i0.hdslb.com/test.jpg"))
+                        .put(new JSONObject().put("season_id", 999).put("title", "Shared season"));
+                FakeConnection response = new FakeConnection(url.toString(), 200,
+                        new JSONObject().put("code", 0).put("data", new JSONObject().put("list", rows)).toString());
+                opened.add(response);
+                return response;
+            } catch (Exception error) { throw new IOException("Invalid synthetic PGC fixture", error); }
+        });
+        BiliStudy spider = new BiliStudy();
+        Field field = BiliStudy.class.getDeclaredField("client");
+        field.setAccessible(true);
+        field.set(spider, client);
+        JSONObject response = new JSONObject(spider.homeVideoContent());
+        JSONArray rows = response.getJSONArray("list");
+        equal(7, rows.length(), "All six PGC categories plus shared season are present without duplicates");
+        int[] order = {2, 7, 3, 4, 5, 1};
+        for (int i = 0; i < order.length; i++)
+            equal("season:" + order[i], rows.getJSONObject(i).getString("vod_id"), "PGC recommendations interleave in category order");
+        equal("season:999", rows.getJSONObject(6).getString("vod_id"), "Shared PGC item appears only once");
+        equal(6, opened.size(), "One home refresh requests exactly six PGC types");
+        for (FakeConnection connection : opened) check(connection.disconnected, "PGC recommendation releases its HTTP connection");
+        equal(7, new JSONObject(spider.homeVideoContent()).getJSONArray("list").length(), "Cached home keeps all PGC results");
+        equal(7, new JSONObject(spider.categoryContent("all", "1", false, null)).getInt("total"), "All tab uses the same media snapshot");
+        equal(6, opened.size(), "Cached home and all pagination do not refetch PGC data");
     }
 
     /** Cloud IP restrictions are reported as blocked, never as a successful playback probe. */

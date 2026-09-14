@@ -36,14 +36,16 @@ def write_json(path: Path, value: object) -> None:
 def make_config(base_url: str, jar_name: str, md5: str) -> dict[str, object]:
     base_url = normalize_base_url(base_url)
     modules = [("media", "Bilibili 影视", ""), ("study", "Bilibili 合集", ""),
-               ("zhou_shen", "Bilibili 周深", "zhou-shen-")]
+               ("zhou_shen", "Bilibili 周深", "zhou-shen-"), ("account", "Bilibili 扫码登录", "")]
     return {
         "spider": f"{base_url}/{jar_name};md5;{md5}",
         "sites": [{
             "key": f"bili_study_{mode}", "name": name, "type": 3, "api": "csp_BiliStudy",
-            "searchable": 1, "quickSearch": 0, "filterable": 1, "playerType": 2,
-            "ext": json.dumps({"mode": mode, "catalog": f"{base_url}/{prefix}catalog.json",
-                               "interests": f"{base_url}/{prefix}interests.json"}, ensure_ascii=False, separators=(",", ":")),
+            "searchable": 0 if mode == "account" else 1, "quickSearch": 0,
+            "filterable": 0 if mode == "account" else 1, "playerType": 2,
+            "ext": json.dumps({"mode": mode} if mode == "account" else {
+                "mode": mode, "catalog": f"{base_url}/{prefix}catalog.json",
+                "interests": f"{base_url}/{prefix}interests.json"}, ensure_ascii=False, separators=(",", ":")),
         } for mode, name, prefix in modules],
         "parses": [], "lives": [], "flags": [],
     }

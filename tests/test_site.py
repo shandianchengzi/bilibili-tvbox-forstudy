@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scripts.build_site import build_site, make_config, normalize_base_url
 from scripts.crawl import validate_config
-from scripts.verify import ZHOU_SHEN_CATEGORIES, dex_classes, validate_public_data, verify_jar, verify_site
+from scripts.verify import ZHOU_SHEN_CATEGORIES, dex_classes, validate_public_data, verify_jar, verify_modules, verify_site
 
 
 ENTRYPOINTS = ["Lcom/github/catvod/spider/BiliStudy;", "Lcom/google/zxing/qrcode/QRCodeWriter;"]
@@ -92,18 +92,48 @@ class PublicationTests(unittest.TestCase):
         config = make_config("https://example.org/project/", "plugin.jar", "0" * 32)
         self.assertEqual(config["spider"], "https://example.org/project/plugin.jar;md5;" + "0" * 32)
         self.assertEqual({json.loads(site["ext"])["mode"] for site in config["sites"]},
-                         {"media", "study", "zhou_shen"})
+                         {"media", "study", "zhou_shen", "account"})
         self.assertTrue(all(site["playerType"] == 2 for site in config["sites"]))
-        self.assertTrue(all(site["searchable"] == 1 for site in config["sites"]))
+        self.assertEqual([site["searchable"] for site in config["sites"]], [1, 1, 1, 0])
+        self.assertEqual([site["filterable"] for site in config["sites"]], [1, 1, 1, 0])
+        self.assertTrue(all(site["quickSearch"] == 0 for site in config["sites"]))
         self.assertEqual([site["name"] for site in config["sites"]],
-                         ["Bilibili 影视", "Bilibili 合集", "Bilibili 周深"])
+                         ["Bilibili 影视", "Bilibili 合集", "Bilibili 周深", "Bilibili 扫码登录"])
         extensions = {json.loads(site["ext"])["mode"]: json.loads(site["ext"]) for site in config["sites"]}
         self.assertEqual(extensions["study"]["catalog"], "https://example.org/project/catalog.json")
         self.assertEqual(extensions["zhou_shen"]["catalog"], "https://example.org/project/zhou-shen-catalog.json")
         self.assertEqual(extensions["zhou_shen"]["interests"], "https://example.org/project/zhou-shen-interests.json")
+        self.assertEqual(extensions["account"], {"mode": "account"})
+        verify_modules(config["sites"], "https://example.org/project")
         for value in ("http://example.org", "https://u:p@example.org", "https://example.org/?key=1", "file:///tmp"):
             with self.assertRaises(ValueError):
                 normalize_base_url(value)
+
+    def test_publication_rejects_account_search_content_or_default_selection(self):
+        base = "https://example.org/project"
+        for flag in ("searchable", "quickSearch", "filterable"):
+            with self.subTest(flag=flag):
+                sites = make_config(base, "plugin.jar", "0" * 32)["sites"]
+                sites[-1][flag] = 1
+                with self.assertRaises(ValueError):
+                    verify_modules(sites, base)
+        sites = make_config(base, "plugin.jar", "0" * 32)["sites"]
+        sites[-1]["ext"] = json.dumps({"mode": "account", "catalog": base + "/catalog.json"})
+        with self.assertRaisesRegex(ValueError, "must not load content catalogs"):
+            verify_modules(sites, base)
+        sites = make_config(base, "plugin.jar", "0" * 32)["sites"]
+        sites.insert(0, sites.pop())
+        with self.assertRaisesRegex(ValueError, "must follow content modules"):
+            verify_modules(sites, base)
+
+    def test_publication_requires_search_in_each_content_module(self):
+        base = "https://example.org/project"
+        for index in range(3):
+            with self.subTest(index=index):
+                sites = make_config(base, "plugin.jar", "0" * 32)["sites"]
+                sites[index]["searchable"] = 0
+                with self.assertRaisesRegex(ValueError, "video search"):
+                    verify_modules(sites, base)
 
     def test_zhou_shen_categories_and_queries_are_separate_from_research(self):
         root = Path(__file__).resolve().parents[1]

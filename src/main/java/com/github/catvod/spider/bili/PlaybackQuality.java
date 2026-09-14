@@ -62,27 +62,37 @@ public final class PlaybackQuality {
         return result;
     }
 
-    /** Preserve every part/episode and UGC section; only append a quality to each play ID. */
+    /** One line per quality, retaining every part/episode in its original section order. */
     public static void addChoices(JSONObject vod, JSONObject data) throws Exception {
-        List<Integer> qualities = available(data);
-        if (qualities.isEmpty()) return;
         String[] names = vod.getString("vod_play_from").split("\\$\\$\\$", -1);
         String[] lines = vod.getString("vod_play_url").split("\\$\\$\\$", -1);
         if (names.length != lines.length) throw new IllegalArgumentException("播放线路数量不匹配");
-        List<String> outNames = new ArrayList<>(), outLines = new ArrayList<>();
+        List<String> episodes = new ArrayList<>();
         for (int i = 0; i < lines.length; i++) {
-            outNames.add(names[i] + " · 自动");
-            outLines.add(lines[i]);
-            for (int quality : qualities) {
-                List<String> episodes = new ArrayList<>();
-                for (String episode : lines[i].split("#", -1)) episodes.add(episode + MARKER + quality);
-                outNames.add(names[i] + " · " + name(quality));
-                outLines.add(join(episodes, "#"));
+            for (String episode : lines[i].split("#", -1)) {
+                int delimiter = episode.indexOf('$');
+                if (delimiter <= 0 || delimiter == episode.length() - 1
+                        || episode.indexOf('$', delimiter + 1) >= 0)
+                    throw new IllegalArgumentException("分集播放格式无效");
+                requested(episode.substring(delimiter + 1));
+                // A repeated ID may intentionally appear under different section titles.
+                // Keep both entries so merging sources cannot remove a part or extra.
+                episodes.add(names.length > 1 ? names[i] + " · " + episode : episode);
             }
+        }
+        List<Integer> qualities = available(data);
+        List<String> outNames = new ArrayList<>(), outLines = new ArrayList<>();
+        outNames.add("自动");
+        outLines.add(join(episodes, "#"));
+        for (int quality : qualities) {
+            List<String> selected = new ArrayList<>();
+            for (String episode : episodes) selected.add(episode + MARKER + quality);
+            outNames.add(name(quality));
+            outLines.add(join(selected, "#"));
         }
         vod.put("vod_play_from", join(outNames, "$$$"));
         vod.put("vod_play_url", join(outLines, "$$$"));
-        vod.put("vod_content", vod.optString("vod_content")
+        if (!qualities.isEmpty()) vod.put("vod_content", vod.optString("vod_content")
                 + "\n\n在播放线路中选择清晰度；自动优先最高 1080P。可选档位根据首个视频获取，其他分P/分集以实际返回为准；缺少所选档位时可切回自动。HDR、杜比及高分辨率需要设备支持。");
     }
 
