@@ -44,19 +44,42 @@ public final class BiliClient {
             "SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "sid"));
     private static final int[] MIXIN = {46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,
             27,43,5,49,33,9,42,19,29,28,14,39,12,38,41,13};
+    private static final ConnectionFactory NETWORK = new ConnectionFactory() {
+        public HttpURLConnection open(URL url) throws IOException {
+            return (HttpURLConnection) url.openConnection();
+        }
+    };
     private final SharedPreferences preferences;
+    private final ConnectionFactory connections;
     private String mixinKey = "";
     private long mixinExpires;
     private long visitorAttempt;
     private String qrKey = "";
     private long qrEpoch;
     private JSONObject qrSuccess;
+    private boolean qrVerified;
     private final Map<String, StoredCookie> qrCookies = new LinkedHashMap<>();
 
     public BiliClient(Context context) {
         if (context == null) throw new IllegalArgumentException("缺少 Android Context");
         preferences = context.getApplicationContext().getSharedPreferences(
                 "bilibili_tvbox_forstudy_session_v1", Context.MODE_PRIVATE);
+        connections = NETWORK;
+    }
+
+    BiliClient(SharedPreferences preferences) {
+        this(preferences, NETWORK);
+    }
+
+    /** Package-local transport seam for complete login transactions without real credentials. */
+    BiliClient(SharedPreferences preferences, ConnectionFactory connections) {
+        if (preferences == null || connections == null) throw new IllegalArgumentException("缺少登录依赖");
+        this.preferences = preferences;
+        this.connections = connections;
+    }
+
+    interface ConnectionFactory {
+        HttpURLConnection open(URL url) throws IOException;
     }
 
     /** Local session presence, not a claim that a server-side session is still valid. */
@@ -68,12 +91,7 @@ public final class BiliClient {
     /** For internal API use only. Never attach this to playback or image requests. */
     public String getCookie() {
         synchronized (COOKIE_LOCK) {
-            StringBuilder result = new StringBuilder();
-            for (Map.Entry<String, StoredCookie> entry : loadCookies().entrySet()) {
-                if (result.length() > 0) result.append("; ");
-                result.append(entry.getKey()).append('=').append(entry.getValue().value);
-            }
-            return result.toString();
+            return cookieHeader(loadCookies());
         }
     }
 
@@ -90,6 +108,12 @@ public final class BiliClient {
             sessionEpoch++;
             preferences.edit().remove("cookies").commit();
         }
+    }
+
+    /** Cancel pending QR work immediately while keeping the last verified account. */
+    public void cancelQr() {
+        // Do not acquire this client's monitor: pollQr may be waiting on the network.
+        synchronized (COOKIE_LOCK) { sessionEpoch++; }
     }
 
     public JSONObject get(String path, Map<String, String> params) throws Exception {
@@ -136,6 +160,7 @@ public final class BiliClient {
     public synchronized JSONObject beginQr() throws Exception {
         qrKey = "";
         qrSuccess = null;
+        qrVerified = false;
         qrCookies.clear();
         qrEpoch = epoch();
         JSONObject envelope = json(request(PASSPORT + "/x/passport-login/web/qrcode/generate",
@@ -154,6 +179,7 @@ public final class BiliClient {
     public synchronized int pollQr(String key) throws Exception {
         if (key == null || key.isEmpty() || !key.equals(qrKey) || qrEpoch != epoch())
             return 86038;
+        if (qrVerified) return 0;
         if (qrSuccess == null) {
             JSONObject envelope = json(request(withQuery(PASSPORT
                     + "/x/passport-login/web/qrcode/poll", Collections.singletonMap("qrcode_key", key)),
@@ -167,46 +193,39 @@ public final class BiliClient {
             qrSuccess = status;
         }
         String credentialUrl = qrSuccess.optString("url");
-        if (!qrCookies.containsKey("SESSDATA") && !credentialUrl.isEmpty()) {
+        if (!hasValidSession(qrCookies) && !credentialUrl.isEmpty()) {
             URL url = checkedUrl(credentialUrl);
             readLegacyCredentials(url, qrCookies);
-            if (!qrCookies.containsKey("SESSDATA")) {
+            if (!hasValidSession(qrCookies)) {
                 if (!isPassport(url) || !url.getPath().equals("/x/passport-login/web/crossDomain"))
                     throw new IOException("Bilibili 返回了不支持的登录票据地址");
                 request(credentialUrl, qrCookies, qrEpoch, true);
             }
         }
-        StoredCookie session = qrCookies.get("SESSDATA");
-        if (session == null || session.expired())
+        if (!hasValidSession(qrCookies))
             throw new IOException("扫码确认成功，但未获取有效登录凭证，请重新扫码");
         if (Thread.currentThread().isInterrupted()) return 86038;
+
+        // Verify this candidate in its own jar. A rejected or interrupted login must not
+        // replace a working account, and a transient failure can retry without polling again.
+        JSONObject envelope = json(request(API + "/x/web-interface/nav", qrCookies, qrEpoch, false));
+        check(envelope);
+        JSONObject nav = payload(envelope);
+        if (!nav.optBoolean("isLogin", false)) throw new ApiException(-101);
+        if (!hasValidSession(qrCookies)) throw new ApiException(-101);
+        StoredCookie session = qrCookies.get("SESSDATA");
+        String uid = nav.optString("mid", "");
+        if (validCookie("DedeUserID", uid))
+            qrCookies.put("DedeUserID", new StoredCookie(uid, session.expires));
         synchronized (COOKIE_LOCK) {
-            if (qrEpoch != sessionEpoch) return 86038;
+            if (qrEpoch != sessionEpoch || Thread.currentThread().isInterrupted()) return 86038;
             Map<String, StoredCookie> existing = loadCookies();
             // Prevent old-account identity fields from surviving an account switch.
             for (String name : AUTH_NAMES) existing.remove(name);
             existing.putAll(qrCookies);
             saveCookies(existing);
+            qrVerified = true;
         }
-        // Credentials are captured and durable before verification; do not consume the key again.
-        JSONObject nav;
-        try {
-            nav = userInfo();
-            if (!nav.optBoolean("isLogin", false)) throw new ApiException(-101);
-        } catch (ApiException failure) {
-            if (failure.code == -101) {
-                synchronized (COOKIE_LOCK) {
-                    if (qrEpoch == sessionEpoch) {
-                        Map<String, StoredCookie> existing = loadCookies();
-                        for (String name : AUTH_NAMES) existing.remove(name);
-                        saveCookies(existing);
-                    }
-                }
-            }
-            throw failure;
-        }
-        String uid = nav.optString("mid", "");
-        if (!uid.isEmpty()) putCookie("DedeUserID", new StoredCookie(uid, session.expires), qrEpoch);
         return qrEpoch == epoch() ? 0 : 86038;
     }
 
@@ -268,7 +287,7 @@ public final class BiliClient {
             if (Thread.currentThread().isInterrupted()) throw new IOException("请求已取消");
             HttpURLConnection connection = null;
             try {
-                connection = (HttpURLConnection) url.openConnection();
+                connection = connections.open(url);
                 connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(10000);
                 connection.setReadTimeout(15000);
@@ -278,10 +297,14 @@ public final class BiliClient {
                 connection.setRequestProperty("Accept-Encoding", "gzip");
                 // The biligame ticket exchange deliberately receives no existing Bilibili cookie.
                 if (!url.getHost().equalsIgnoreCase("passport.biligame.com"))
-                    connection.setRequestProperty("Cookie", getCookie());
+                    connection.setRequestProperty("Cookie", loginCapture == null ? getCookie() : cookieHeader(loginCapture));
                 else connection.setRequestProperty("Cookie", "");
                 int status = connection.getResponseCode();
                 captureCookies(url, connection.getHeaderFields(), loginCapture, requestEpoch, crossDomain);
+                // A ticket exchange is complete once credentials arrive. Its browser landing
+                // page can redirect elsewhere or fail; neither should discard this login.
+                if (crossDomain && status >= 200 && status < 400 && hasValidSession(loginCapture))
+                    return "";
                 if (status >= 300 && status <= 399) {
                     String location = connection.getHeaderField("Location");
                     if (location == null) throw new IOException("Bilibili 重定向缺少目标地址");
@@ -427,6 +450,21 @@ public final class BiliClient {
             if (c <= 32 || c >= 127 || c == ';' || c == '\\' || c == '"') return false;
         }
         return true;
+    }
+
+    private static boolean hasValidSession(Map<String, StoredCookie> cookies) {
+        StoredCookie session = cookies == null ? null : cookies.get("SESSDATA");
+        return session != null && !session.expired() && validCookie("SESSDATA", session.value);
+    }
+
+    private static String cookieHeader(Map<String, StoredCookie> cookies) {
+        StringBuilder result = new StringBuilder();
+        for (Map.Entry<String, StoredCookie> entry : cookies.entrySet()) {
+            if (entry.getValue().expired()) continue;
+            if (result.length() > 0) result.append("; ");
+            result.append(entry.getKey()).append('=').append(entry.getValue().value);
+        }
+        return result.toString();
     }
 
     private static long epoch() { synchronized (COOKIE_LOCK) { return sessionEpoch; } }

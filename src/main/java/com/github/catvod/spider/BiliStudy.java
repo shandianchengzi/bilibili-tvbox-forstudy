@@ -11,6 +11,9 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.spider.bili.BiliClient;
 import com.github.catvod.spider.bili.Dash;
 import com.github.catvod.spider.bili.LocalServer;
+import com.github.catvod.spider.bili.VideoMetadata;
+import com.github.catvod.spider.bili.QrLoginDialog;
+import com.github.catvod.spider.bili.QrPoller;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
@@ -43,6 +46,10 @@ public class BiliStudy extends Spider {
     private static volatile String qrMessage = "";
     private static volatile long qrCreated;
     private static volatile boolean qrRunning;
+    private static volatile Bitmap qrBitmap;
+    private static volatile Thread qrWorker;
+    private static volatile BiliClient qrClient;
+    private static final QrLoginDialog QR_DIALOG = new QrLoginDialog();
     private Context context;
     private BiliClient client;
     private String mode = "media";
@@ -55,6 +62,7 @@ public class BiliStudy extends Spider {
     private final Map<Integer, JSONObject> historyCursors = new ConcurrentHashMap<>();
 
     public void init(Context context, String extend) throws Exception {
+        Init.init(context);
         this.context = context.getApplicationContext();
         this.client = new BiliClient(this.context);
         if (extend != null && !extend.trim().isEmpty()) {
@@ -339,7 +347,7 @@ public class BiliStudy extends Spider {
         JSONObject data = client.get("/x/web-interface/wbi/view", params("bvid", checkedBvid(bvid)));
         JSONObject owner = data.optJSONObject("owner");
         JSONObject vod = card("video:" + bvid, data.optString("title"), "", data.optString("pic"))
-            .put("vod_content", data.optString("desc")).put("vod_actor", owner == null ? "" : owner.optString("name"))
+            .put("vod_content", VideoMetadata.description(data)).put("vod_year", VideoMetadata.year(data)).put("vod_actor", owner == null ? "" : owner.optString("name"))
             .put("type_name", data.optString("tname"));
         List<String> lines = new ArrayList<>(), names = new ArrayList<>();
         List<String> pages = new ArrayList<>();
@@ -402,9 +410,7 @@ public class BiliStudy extends Spider {
 
     private JSONObject authDetail(String action) throws Exception {
         if ("logout".equals(action)) {
-            LOGIN_GENERATION.incrementAndGet(); qrRunning = false;
-            if (!qrPicture.isEmpty()) LocalServer.get().remove(qrPicture);
-            qrPicture = ""; qrCreated = 0;
+            cancelPendingLogin(true);
             client.logout(); dynamicCursors.clear(); historyCursors.clear();
             toast("已清除本机 Bilibili 登录信息");
             return card("auth:logout", "已退出登录", "", "").put("vod_content", "登录信息已从设备移除。");
@@ -415,50 +421,113 @@ public class BiliStudy extends Spider {
                 .put("vod_content", "账号 UID：" + user.optString("mid") + "\n扫码成功后，请重新加载源配置或重启 TVBox，以刷新收藏夹筛选项。");
         }
         startLogin();
-        return card("auth:login", "用 Bilibili 手机客户端扫描封面二维码", qrMessage, qrPicture)
-            .put("vod_content", "打开 Bilibili 手机客户端扫一扫，确认登录。本页会在后台等待确认，成功时电视会提示；随后重新加载源配置或重启 TVBox，以刷新收藏夹。\n二维码约 3 分钟有效，过期后重新进入本页生成。\n" + qrMessage)
+        return card("auth:login", "用 Bilibili 手机客户端扫描登录窗口二维码", qrMessage, qrPicture)
+            .put("vod_content", "打开 Bilibili 手机客户端扫一扫，扫描弹窗中的二维码并确认。弹窗实时显示登录状态，可以刷新二维码；没有弹窗时可扫描详情封面。成功后重新加载源配置或重启 TVBox，以刷新收藏夹。\n二维码约 3 分钟有效，过期后重新进入本页生成。\n" + qrMessage)
             .put("vod_play_from", "登录说明").put("vod_play_url", "扫码成功后重载源配置$noop");
     }
 
-    private synchronized void startLogin() throws Exception {
+    private void startLogin() throws Exception {
+        final long generation;
         synchronized (BiliStudy.class) {
-            if (qrRunning && System.currentTimeMillis() - qrCreated < 175000) return;
+            if (qrRunning && System.currentTimeMillis() - qrCreated < 175000) {
+                showLoginDialog(LOGIN_GENERATION.get());
+                return;
+            }
+            cancelPendingLogin(false);
+            generation = LOGIN_GENERATION.incrementAndGet();
+            qrClient = client;
+            qrCreated = System.currentTimeMillis();
+            qrMessage = "正在生成二维码";
+            qrRunning = true;
+        }
+        try {
             JSONObject qr = client.beginQr();
             final String key = qr.getString("qrcode_key");
             Map<EncodeHintType, Object> hints = new HashMap<>();
             hints.put(EncodeHintType.CHARACTER_SET, "UTF-8"); hints.put(EncodeHintType.MARGIN, 3);
             BitMatrix matrix = new QRCodeWriter().encode(qr.getString("url"), BarcodeFormat.QR_CODE, 640, 640, hints);
-            // TVBox commonly center-crops covers to 3:4. Keep the whole QR inside a portrait canvas.
-            Bitmap bitmap = Bitmap.createBitmap(960, 1280, Bitmap.Config.ARGB_8888);
-            int[] pixels = new int[960 * 1280];
-            Arrays.fill(pixels, 0xffffffff);
-            for (int y = 0; y < 640; y++) for (int x = 0; x < 640; x++) pixels[(y + 320) * 960 + x + 160] = matrix.get(x, y) ? 0xff000000 : 0xffffffff;
-            bitmap.setPixels(pixels, 0, 960, 0, 0, 960, 1280);
-            ByteArrayOutputStream png = new ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.PNG, 100, png); bitmap.recycle();
-            if (!qrPicture.isEmpty()) LocalServer.get().remove(qrPicture);
-            qrPicture = LocalServer.get().put(png.toByteArray(), "image/png", 180000L);
-            qrCreated = System.currentTimeMillis(); qrMessage = "等待扫码"; qrRunning = true;
-            final long generation = LOGIN_GENERATION.incrementAndGet();
-            Thread poll = new Thread(new Runnable() {
-                public void run() {
-                    try {
-                        for (int attempts = 0; attempts < 60 && LOGIN_GENERATION.get() == generation; attempts++) {
-                            Thread.sleep(3000);
-                            synchronized (BiliStudy.class) {
-                                if (LOGIN_GENERATION.get() != generation) break;
-                                int status = client.pollQr(key);
-                                if (status == 0) { LocalServer.get().remove(qrPicture); qrMessage = "登录成功，请重载源配置或重启 TVBox"; toast(qrMessage); break; }
-                                if (status == 86038) { qrMessage = "二维码已过期，重新进入本页"; break; }
-                                qrMessage = status == 86090 ? "已扫码，请在手机确认" : "等待扫码";
-                            }
+            int[] square = new int[640 * 640];
+            for (int y = 0; y < 640; y++) for (int x = 0; x < 640; x++) square[y * 640 + x] = matrix.get(x, y) ? 0xff000000 : 0xffffffff;
+            Bitmap image = Bitmap.createBitmap(square, 640, 640, Bitmap.Config.ARGB_8888);
+            // The native dialog uses a square bitmap directly. The 3:4 cover remains a fallback.
+            Bitmap cover = Bitmap.createBitmap(960, 1280, Bitmap.Config.ARGB_8888);
+            int[] portrait = new int[960 * 1280];
+            Arrays.fill(portrait, 0xffffffff);
+            for (int y = 0; y < 640; y++) System.arraycopy(square, y * 640, portrait, (y + 320) * 960 + 160, 640);
+            cover.setPixels(portrait, 0, 960, 0, 0, 960, 1280);
+            ByteArrayOutputStream png = new ByteArrayOutputStream();
+            cover.compress(Bitmap.CompressFormat.PNG, 100, png); cover.recycle();
+            synchronized (BiliStudy.class) {
+                if (generation != LOGIN_GENERATION.get()) return;
+                qrBitmap = image;
+                qrPicture = LocalServer.get().put(png.toByteArray(), "image/png", 180000L);
+                qrMessage = "等待扫码，请使用 Bilibili 手机客户端扫一扫";
+                final long remaining = Math.max(1, 180000 - (System.currentTimeMillis() - qrCreated));
+                qrWorker = new Thread(() -> {
+                    QrPoller.Result result = QrPoller.await(() -> client.pollQr(key), new QrPoller.Listener() {
+                        public boolean active() { return generation == LOGIN_GENERATION.get(); }
+                        public void update(String message) {
+                            if (!active()) return;
+                            qrMessage = message;
+                            QR_DIALOG.updateStatus(message);
                         }
-                    } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-                    catch (Exception e) { qrMessage = friendly(e); toast(qrMessage); }
-                    finally { if (LOGIN_GENERATION.get() == generation) qrRunning = false; }
+                    }, remaining);
+                    synchronized (BiliStudy.class) {
+                        if (generation != LOGIN_GENERATION.get()) return;
+                        qrRunning = false;
+                        qrWorker = null;
+                        if (result == QrPoller.Result.SUCCESS) {
+                            LocalServer.get().remove(qrPicture);
+                            qrMessage = "登录成功，请重载源配置或重启 TVBox";
+                            QR_DIALOG.updateStatus(qrMessage);
+                            toast(qrMessage);
+                        }
+                    }
+                }, "bili-qr-login");
+                qrWorker.setDaemon(true);
+                qrWorker.start();
+            }
+            showLoginDialog(generation);
+        } catch (Exception failure) {
+            synchronized (BiliStudy.class) {
+                if (generation == LOGIN_GENERATION.get()) {
+                    qrRunning = false;
+                    qrMessage = friendly(failure);
+                    QR_DIALOG.updateStatus(qrMessage);
                 }
-            }, "bili-qr-login");
-            poll.setDaemon(true); poll.start();
+            }
+            throw failure;
         }
+    }
+
+    private void showLoginDialog(long generation) {
+        if (generation != LOGIN_GENERATION.get() || qrBitmap == null) return;
+        QR_DIALOG.show(qrBitmap, qrMessage, () -> {
+            Thread refresh = new Thread(() -> {
+                cancelPendingLogin(false);
+                try { startLogin(); }
+                catch (Exception failure) { toast(friendly(failure)); }
+            }, "bili-qr-refresh");
+            refresh.setDaemon(true);
+            refresh.start();
+        }, () -> cancelPendingLogin(false));
+    }
+
+    /** Cancels pending authentication without signing the existing account out. */
+    private static synchronized void cancelPendingLogin(boolean dismiss) {
+        LOGIN_GENERATION.incrementAndGet();
+        qrRunning = false;
+        Thread previous = qrWorker;
+        qrWorker = null;
+        if (previous != null) previous.interrupt();
+        BiliClient pending = qrClient;
+        qrClient = null;
+        if (pending != null) pending.cancelQr();
+        if (!qrPicture.isEmpty()) LocalServer.get().remove(qrPicture);
+        qrPicture = "";
+        qrBitmap = null;
+        qrCreated = 0;
+        if (dismiss) QR_DIALOG.dismiss();
     }
 
     private synchronized void loadCatalog() throws Exception {
