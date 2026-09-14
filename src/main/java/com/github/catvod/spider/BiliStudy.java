@@ -448,9 +448,28 @@ public class BiliStudy extends Spider {
         JSONArray out = new JSONArray();
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject v = a.getJSONObject(i);
-            if (isBvid(v.optString("bvid"))) out.put(card("video:" + v.getString("bvid"), v.optString("title"), v.optString("author") + " · " + v.optString("duration"), v.optString("pic")));
+            if (isBvid(v.optString("bvid"))) out.put(card("video:" + v.getString("bvid"), v.optString("title"), ("study".equals(mode) ? durationMinutes(v.optString("duration")) : v.optString("author") + " · " + v.optString("duration")), v.optString("pic")));
         }
         return out;
+    }
+
+    private static String durationMinutes(String duration) {
+        try {
+            String[] parts = (duration == null ? "" : duration.trim()).split(":", -1);
+            if (parts.length > 3) return "时长未知";
+            long seconds = 0;
+            for (int i = 0; i < parts.length; i++) {
+                if (!parts[i].matches("[0-9]+")) return "时长未知";
+                long part = Long.parseLong(parts[i]);
+                if ((i > 0 && part >= 60) || seconds > (Long.MAX_VALUE - part) / 60)
+                    return "时长未知";
+                seconds = seconds * 60 + part;
+            }
+            if (seconds <= 0) return "时长未知";
+            return seconds < 60 ? "不足1分钟" : seconds / 60 + "分钟";
+        } catch (NumberFormatException invalid) {
+            return "时长未知";
+        }
     }
 
     private JSONObject videoDetail(String bvid) throws Exception {
