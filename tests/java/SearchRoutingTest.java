@@ -33,6 +33,7 @@ public final class SearchRoutingTest {
         retainsResultsWhenOneMediaTypeFails();
         neverFallsBackToUploaderSearch();
         retainsSingleFileAudiobooks();
+        filtersRowsWithoutValidBv();
         scopesZhouSearch();
         preservesExplicitIds();
         validatesMediaSearchParameters();
@@ -50,10 +51,42 @@ public final class SearchRoutingTest {
             check(videos.length() > 0, "Live user query returns uploader videos");
             JSONArray films = liveRows(client.searchMedia("media_ft", KEYWORD, 1), "media_ft");
             JSONArray bangumi = liveRows(client.searchMedia("media_bangumi", KEYWORD, 1), "media_bangumi");
+            String firstBv = "";
+            int validBvCount = 0;
+            boolean loggedInvalidKeys = false;
+            for (int i = 0; i < videos.length(); i++) {
+                JSONObject row = videos.optJSONObject(i);
+                String candidate = row == null ? "" : row.optString("bvid");
+                if (candidate.matches("BV[0-9A-Za-z]{10}")) {
+                    validBvCount++;
+                    if (firstBv.isEmpty()) firstBv = candidate;
+                    continue;
+                }
+                Object field = row == null ? null : row.opt("bvid");
+                String fieldType = row == null || !row.has("bvid") ? "missing"
+                        : field == JSONObject.NULL || field == null ? "null" : field.getClass().getSimpleName();
+                int length = field instanceof String ? ((String) field).length() : -1;
+                String type = row == null ? "<non-object>" : row.optString("type", "<missing>");
+                if (!type.matches("[A-Za-z0-9_-]{1,40}")) type = "<other-or-missing>";
+                System.out.println("SearchRoutingTest live row: index=" + i + " type=" + type
+                        + " bvid_field_type=" + fieldType + " bvid_field_length=" + length);
+                if (!loggedInvalidKeys) {
+                    List<String> keys = new ArrayList<>();
+                    java.util.Iterator<String> names = row == null
+                            ? Collections.<String>emptyList().iterator() : row.keys();
+                    while (names.hasNext()) {
+                        String name = names.next();
+                        keys.add(name.matches("[A-Za-z0-9_]{1,60}") ? name : "<nonstandard-key>");
+                    }
+                    Collections.sort(keys);
+                    System.out.println("SearchRoutingTest live first invalid row keys=" + keys);
+                    loggedInvalidKeys = true;
+                }
+            }
             System.out.println("SearchRoutingTest live: query=" + KEYWORD + " video_hits=" + videos.length()
-                    + " media_ft_hits=" + films.length() + " media_bangumi_hits=" + bangumi.length());
-            String firstBv = videos.getJSONObject(0).optString("bvid");
-            check(firstBv.matches("BV[0-9A-Za-z]{10}"), "Live uploader search provides a BV identity");
+                    + " media_ft_hits=" + films.length() + " media_bangumi_hits=" + bangumi.length()
+                    + " valid_bv_count=" + validBvCount);
+            check(validBvCount > 0, "Live uploader search provides at least one valid BV identity");
             JSONObject view = client.get("/x/web-interface/wbi/view", Collections.singletonMap("bvid", firstBv));
             JSONArray parts = view.optJSONArray("pages");
             check(parts != null && parts.length() > 0, "Live BV view exposes actual playable parts");
@@ -167,6 +200,17 @@ public final class SearchRoutingTest {
         equal(KEYWORD + " 完整有声书", result.getJSONArray("list").getJSONObject(0).getString("vod_name"),
                 "Single-file audiobook title is retained");
         equal(3, result.getInt("pagecount"), "Uploader-video search retains pagination");
+        study.complete();
+    }
+
+    private static void filtersRowsWithoutValidBv() throws Exception {
+        Fixture study = new Fixture("study", KEYWORD, 1);
+        study.reply("video", data(1,
+                new JSONObject().put("type", "media_ft").put("season_id", 123).put("title", "Non-video row"),
+                new JSONObject(),
+                new JSONObject().put("bvid", "invalid").put("title", "Malformed identity"),
+                video()));
+        ids(study.search(), "video:" + BV);
         study.complete();
     }
 
