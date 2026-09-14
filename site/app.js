@@ -52,7 +52,7 @@
       const metadata = node("div", "interest-meta");
       const validStatus = entry && Object.prototype.hasOwnProperty.call(stateLabels, entry.status) ? entry.status : "";
       const count = entry && Array.isArray(entry.items) ? entry.items.filter(item => item && typeof item.bvid === "string" && /^BV[0-9A-Za-z]{10}$/.test(item.bvid)).length : null;
-      metadata.append(node("span", "", count === null ? "公开视频合集" : `${count} 条索引`));
+      metadata.append(node("span", "", count === null ? "UP 主作品" : `${count} 条索引`));
       metadata.append(node("span", `interest-state ${validStatus}`, validStatus ? stateLabels[validStatus] : "索引待读取"));
       card.append(heading, node("p", "", category.description || "按兴趣关键词整理公开视频。"), metadata);
       fragment.append(card);

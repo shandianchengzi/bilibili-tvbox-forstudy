@@ -14,12 +14,22 @@ https://shandianchengzi.github.io/bilibili-tvbox-forstudy/tvbox.json
 
 | 模块 | 功能 |
 | --- | --- |
-| Bilibili 影视 | 动态、收藏夹、历史记录、电影、综艺、纪录片、国创、剧集、番剧 |
-| Bilibili 合集 | 按兴趣分类查找视频；多 P 视频分 P 播放；视频包含 UGC 合集时显示合集分集；详情展示 BV 号、北京时间发布时间及精确播放量 |
+| Bilibili 影视 | 电影、综艺、纪录片、国创、剧集、番剧；关键词搜索官方影视与番剧；另有动态、收藏夹、历史记录 |
+| Bilibili 合集 | 按兴趣分类查找 UP 主作品，支持多 P、UP 主 UGC 合集及单个长视频；详情展示 BV 号、北京时间发布时间及精确播放量 |
 | Bilibili 周深 | 综艺、演唱会、歌曲、采访、剪辑、搞笑、舞台、卡布；独立公共目录与筛选 |
 | Bilibili 扫码登录 | 统一扫码登录、账号状态与退出登录入口；登录状态由三个内容模块共用 |
 
-三个内容模块都保留搜索功能，可输入关键词、BV 号或 Bilibili 视频链接；支持 `ep123` / `ss123` 影视编号。周深专区的关键词搜索自动关联「周深」。扫码登录是独立站点，不参与搜索，也不出现在内容模块的子分类或推荐中。
+关键词搜索按模块区分：
+
+| 搜索位置 | 搜索内容 |
+| --- | --- |
+| Bilibili 影视 | Bilibili 官方影视与番剧条目（`media_ft` / `media_bangumi`） |
+| Bilibili 合集 | UP 主投稿，如课程、听书、合集视频与专题作品（`video`） |
+| Bilibili 周深 | 周深相关的 UP 主投稿，关键词自动关联「周深」（`video`） |
+
+例如，搜索「红星照耀中国」时，影视查找官方影视条目，合集查找 UP 主发布的有声书、课程或相关作品；各模块以对应接口的实际结果为准。输入明确的 BV 号、Bilibili 视频链接或 `ep123` / `ss123` 影视编号时，仍可直接打开指定内容。扫码登录是独立站点，不参与搜索，也不出现在内容模块的子分类或推荐中。
+
+合集详情展开多 P 视频和视频关联的 UP 主 UGC 合集，按目录提供分集播放。整本有声书或“一口气看完”作品也可能是单个长视频，同样可以搜索和播放。若接口只返回部分合集目录，详情会标明已加载集数与总集数。
 
 各内容模块的「推荐」汇总本模块内容，「全部」分类支持每页 20 条继续浏览。研究兴趣和周深专区包含各自目录已收录的视频并去除重复 BV，不代表 Bilibili 全量视频；影视汇总各影视分类当前可用的公开视频。进入具体分类可继续实时查找、筛选或翻页。
 
@@ -85,6 +95,9 @@ python3 scripts/build_site.py --help
 
 ## 参考实现与协议
 
+- [用户提供的参考源配置](https://9280.kstore.vip/newwex.json)：影视和合集分别使用 `csp_BiliYsGuard`、`csp_BiliGuard`，合集分类以关键词配置。其加密爬虫内部无法从公开配置核对；本项目依据可读源码和接口返回实现，未运行该成品爬虫。
+- [CatVod Bili 的关键词搜索与多 P 播放](https://github.com/liu673cn/CatVodSpider/blob/978d46b4255b3844a05c3cddab7d48fb625e9263/app/src/main/java/com/github/catvod/spider/Bili.java)：使用普通投稿搜索并展开 `pages`，没有要求每条结果必须属于 UGC 合集。
+- [TVBox Python Bilibili 的 UGC 合集分集处理](https://github.com/li5bo5/TVBox/blob/8badb1f82d88edcd8b7fdcb1a047bf637d5fb45c/py/py_bilibili.py)
 - [TVBox 的 JAR 加载与 Spider 调用](https://github.com/q215613905/TVBoxOS/blob/main/app/src/main/java/com/github/catvod/crawler/JarLoader.java)
 - [TVBox Exo DASH 检测](https://github.com/q215613905/TVBoxOS/blob/main/player/src/main/java/xyz/doikki/videoplayer/exo/ExoMediaSourceHelper.java)
 - [PiliPlus 的 Bilibili 接口定义](https://github.com/bggRGjQaUbCoE/PiliPlus/blob/main/lib/http/api.dart)

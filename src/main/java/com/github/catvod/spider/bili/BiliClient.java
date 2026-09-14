@@ -156,6 +156,18 @@ public final class BiliClient {
         return get("/x/web-interface/wbi/search/type", params);
     }
 
+    /** Search licensed shows without including uploader videos in the film/TV source. */
+    public JSONObject searchMedia(String kind, String keyword, int page) throws Exception {
+        if (!"media_ft".equals(kind) && !"media_bangumi".equals(kind))
+            throw new IllegalArgumentException("不支持的影视搜索类型");
+        ensureVisitor();
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("search_type", kind);
+        params.put("keyword", keyword == null ? "" : keyword.trim());
+        params.put("page", String.valueOf(Math.max(1, page)));
+        return get("/x/web-interface/wbi/search/type", params);
+    }
+
     /** Call off the main thread; display the returned URL as a QR image locally. */
     public synchronized JSONObject beginQr() throws Exception {
         qrKey = "";

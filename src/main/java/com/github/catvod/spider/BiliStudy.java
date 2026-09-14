@@ -9,6 +9,7 @@ import android.widget.Toast;
 
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.spider.bili.BiliClient;
+import com.github.catvod.spider.bili.BiliCollections;
 import com.github.catvod.spider.bili.PlaybackQuality;
 import com.github.catvod.spider.bili.LocalServer;
 import com.github.catvod.spider.bili.VideoMetadata;
@@ -30,6 +31,8 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -173,22 +176,52 @@ public class BiliStudy extends Spider {
             Matcher ep = Pattern.compile("(?:^|/)(ep|ss)([0-9]+)").matcher(key.trim());
             if (bv.find()) return page(new JSONArray().put(card("video:" + bv.group(), bv.group(), "打开视频", "")), 1, false).toString();
             if (ep.find()) return page(new JSONArray().put(card((ep.group(1).equals("ep") ? "ep:" : "season:") + ep.group(2), ep.group(), "打开影视", "")), 1, false).toString();
+            if ("media".equals(mode)) return mediaSearch(key.trim(), p).toString();
             String keyword = "zhou_shen".equals(mode) && !key.contains("周深") ? "周深 " + key.trim() : key.trim();
             JSONObject data = client.search(keyword, p, "totalrank");
-            JSONArray result = searchCards(data.optJSONArray("result"));
-            // Search both authored videos and licensed shows; one failed secondary endpoint does not discard videos.
-            try {
-                for (String kind : "media".equals(mode) ? Arrays.asList("media_ft", "media_bangumi") : java.util.Collections.<String>emptyList()) {
-                JSONObject shows = client.get("/x/web-interface/wbi/search/type", params("search_type", kind, "keyword", key, "page", pg));
-                JSONArray a = shows.optJSONArray("result");
-                for (int i = 0; a != null && i < a.length(); i++) {
-                    JSONObject s = a.getJSONObject(i);
-                    if (s.optLong("season_id") > 0) result.put(card("season:" + s.optLong("season_id"), s.optString("title"), "Bilibili 正版影视", s.optString("cover")));
-                }
-                }
-            } catch (Exception ignored) { }
-            return page(result, p, p < data.optInt("numPages", p)).toString();
+            return page(searchCards(data.optJSONArray("result")), p, p < data.optInt("numPages", p)).toString();
         } catch (Exception e) { return errorPage(e).toString(); }
+    }
+
+    /** Official film/series search is separate from authored-video collections. */
+    private JSONObject mediaSearch(String keyword, int p) throws Exception {
+        ExecutorService workers = Executors.newFixedThreadPool(2, task -> {
+            Thread thread = new Thread(task, "bili-media-search");
+            thread.setDaemon(true);
+            return thread;
+        });
+        try {
+            List<Callable<JSONObject>> requests = new ArrayList<>();
+            for (String kind : Arrays.asList("media_ft", "media_bangumi"))
+                requests.add(() -> client.searchMedia(kind, keyword, p));
+            List<Future<JSONObject>> responses = workers.invokeAll(requests, 8, TimeUnit.SECONDS);
+            JSONArray result = new JSONArray();
+            Set<String> seen = new HashSet<>();
+            boolean more = false, succeeded = false;
+            for (Future<JSONObject> response : responses) {
+                if (response.isCancelled()) continue;
+                JSONObject data;
+                try { data = response.get(); }
+                catch (InterruptedException interrupted) { throw interrupted; }
+                catch (Exception failure) { continue; }
+                JSONArray rows = data.optJSONArray("result");
+                if (rows == null) continue;
+                succeeded = true;
+                more |= p < data.optInt("numPages", p);
+                for (int i = 0; i < rows.length(); i++) {
+                    JSONObject item = rows.optJSONObject(i);
+                    if (item == null || item.optLong("season_id") <= 0) continue;
+                    String season = item.optString("season_id");
+                    if (seen.add(season)) result.put(card("season:" + season, item.optString("title"),
+                            item.optString("index_show", "Bilibili 官方影视"), item.optString("cover")));
+                }
+            }
+            if (!succeeded) throw new IllegalStateException("影视搜索暂时不可用，请稍后重试");
+            return page(result, p, more);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw interrupted;
+        } finally { workers.shutdownNow(); }
     }
 
     public String detailContent(List<String> ids) throws Exception {
@@ -426,31 +459,40 @@ public class BiliStudy extends Spider {
         JSONObject vod = card("video:" + bvid, data.optString("title"), "", data.optString("pic"))
             .put("vod_content", VideoMetadata.description(data)).put("vod_year", VideoMetadata.year(data)).put("vod_actor", owner == null ? "" : owner.optString("name"))
             .put("type_name", data.optString("tname"));
-        List<String> lines = new ArrayList<>(), names = new ArrayList<>();
+        JSONObject collection = BiliCollections.expand(client, data);
+        if (collection != null) {
+            JSONArray entries = collection.optJSONArray("entries");
+            String progress = collection.optBoolean("complete")
+                    ? "UP主合集 · " + collection.optInt("archive_count") + " 个视频 · " + collection.optInt("count") + " 个选集"
+                    : "合集目录尚未加载完整：已载 " + collection.optInt("archive_count")
+                        + (collection.optInt("total") > 0 ? "/" + collection.optInt("total") : "")
+                        + " 个视频；重新进入详情可重试。";
+            if (entries != null && entries.length() > 0) {
+                List<String> tracks = new ArrayList<>();
+                for (int i = 0; i < entries.length(); i++) {
+                    JSONObject entry = entries.getJSONObject(i);
+                    tracks.add(label((i + 1) + ". " + entry.optString("title")) + "$play:"
+                            + checkedBvid(entry.getString("bvid")) + ":" + digits(entry.optString("cid", "0")));
+                }
+                String pic = collection.optString("pic", data.optString("pic"));
+                if (pic.startsWith("//")) pic = "https:" + pic;
+                if (pic.startsWith("http://")) pic = "https://" + pic.substring(7);
+                vod.put("vod_name", clean(collection.optString("name", data.optString("title"))))
+                        .put("vod_pic", pic).put("type_name", "UP主合集").put("vod_remarks", progress)
+                        .put("vod_content", clean(collection.optString("description")) + "\n" + progress
+                                + "\n\n本次命中视频的信息：\n" + VideoMetadata.description(data));
+                return qualityChoices(vod.put("vod_play_from", "自动").put("vod_play_url", join(tracks, "#")));
+            }
+            vod.put("vod_content", vod.optString("vod_content") + "\n\n" + progress);
+        }
         List<String> pages = new ArrayList<>();
         JSONArray a = data.optJSONArray("pages");
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject v = a.getJSONObject(i);
-            pages.add(label((i + 1) + ". " + v.optString("part")) + "$play:" + bvid + ":" + v.getString("cid"));
+            pages.add(label((i + 1) + ". " + v.optString("part")) + "$play:" + bvid + ":" + digits(v.optString("cid")));
         }
         if (pages.isEmpty()) pages.add("播放$play:" + bvid + ":" + data.optString("cid", "0"));
-        names.add("Bilibili 视频"); lines.add(join(pages, "#"));
-        JSONObject collection = data.optJSONObject("ugc_season");
-        if (collection != null) {
-            JSONArray sections = collection.optJSONArray("sections");
-            for (int s = 0; sections != null && s < sections.length(); s++) {
-                JSONObject section = sections.getJSONObject(s);
-                JSONArray episodes = section.optJSONArray("episodes");
-                List<String> tracks = new ArrayList<>();
-                for (int j = 0; episodes != null && j < episodes.length(); j++) {
-                    JSONObject episode = episodes.getJSONObject(j), arc = episode.optJSONObject("arc");
-                    String bv = episode.optString("bvid", arc == null ? "" : arc.optString("bvid"));
-                    if (isBvid(bv)) tracks.add(label((j + 1) + ". " + episode.optString("title")) + "$play:" + bv + ":" + episode.optString("cid", "0"));
-                }
-                if (!tracks.isEmpty()) { names.add(label("合集 · " + section.optString("title", collection.optString("title")))); lines.add(join(tracks, "#")); }
-            }
-        }
-        return qualityChoices(vod.put("vod_play_from", join(names, "$$$")).put("vod_play_url", join(lines, "$$$")));
+        return qualityChoices(vod.put("vod_play_from", "自动").put("vod_play_url", join(pages, "#")));
     }
 
     private JSONObject seasonDetail(String key, String value) throws Exception {
