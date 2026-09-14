@@ -48,7 +48,7 @@ public final class BiliClientTest {
         playerQualityTransactions();
         detailQualityProbe();
         if ("1".equals(System.getenv("BILI_QR_LIVE_SMOKE"))) liveQrSmoke();
-        if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) livePlaybackSmoke();
+        if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) reportLivePlaybackSmoke();
         System.out.println("BiliClientTest: " + assertions + " assertions passed");
     }
 
@@ -382,11 +382,28 @@ public final class BiliClientTest {
         failed.complete(1);
     }
 
+    /** Cloud IP restrictions are reported as blocked, never as a successful playback probe. */
+    private static void reportLivePlaybackSmoke() throws Exception {
+        try { livePlaybackSmoke(); }
+        catch (IOException error) {
+            boolean limited;
+            if (error instanceof BiliClient.ApiException) {
+                int code = ((BiliClient.ApiException) error).code;
+                limited = code == -412 || code == -352 || code == -509;
+            } else {
+                limited = "Bilibili 暂时限制访问，请稍后重试（HTTP 412）".equals(error.getMessage())
+                        || "Bilibili 暂时限制访问，请稍后重试（HTTP 429）".equals(error.getMessage());
+            }
+            if (!limited) throw error;
+            System.out.println("::warning title=Bilibili live playback blocked::BiliClient live playback smoke: BLOCKED by upstream rate control; no live playback result. Offline quality and callback regressions remain required.");
+        }
+    }
+
     /** Opt-in anonymous API check; validates manifests without downloading any media. */
     private static void livePlaybackSmoke() throws Exception {
         BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()));
         String bvid = "BV1xx411c7mD";
-        JSONObject view = client.get("/x/web-interface/view", map("bvid", bvid));
+        JSONObject view = client.get("/x/web-interface/wbi/view", map("bvid", bvid));
         String cid = view.optString("cid", "");
         check(cid.matches("[1-9][0-9]*"), "Anonymous real video metadata returns a valid CID");
         JSONObject data = client.get("/x/player/wbi/playurl", map("bvid", bvid, "cid", cid,

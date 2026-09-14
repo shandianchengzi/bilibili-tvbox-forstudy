@@ -51,6 +51,8 @@ https://shandianchengzi.github.io/bilibili-tvbox-forstudy/tvbox.json
 
 工作流在 `main` 提交、手动运行及每日 UTC 02:17 / 14:17 执行；Pull Request 只检查，不部署。工作流编译 Java → DEX JAR，运行测试，抓取公共元数据，生成订阅，上传构建附件，再部署到 Pages。具体触发时间以工作流为准，GitHub 定时任务可能排队延迟。
 
+匿名真实播放探测遇到明确的上游风控或限流时，会显示 `BLOCKED` 警告并停止探测；这不表示真实播放验证通过。清晰度选择、播放回调与音视频清单的离线回归仍是发布必需检查，其他接口或清单错误继续阻断提交构建。
+
 首次必须在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。仅写入工作流不会自动开启新仓库的 Pages；默认 `GITHUB_TOKEN` 没有替仓库开启 Pages 所需的管理权限。设置完成后重新运行失败的部署作业或手动运行工作流即可。
 
 抓取只保存 BV 编号、标题、封面、作者、时长，不保存视频文件、临时播放地址或账号数据。Bilibili 返回风控 / 限流时停止当前轮抓取，保留上次成功目录，并在 `catalog.json` 和项目页面标明状态。首次抓取失败会明确显示空目录；TVBox 仍可以在设备网络下实时搜索。
