@@ -180,7 +180,7 @@ public class BiliStudy extends Spider {
 
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         try {
-            if (id.startsWith("noop")) throw new IllegalStateException("扫码成功后返回首页，重新进入动态、收藏夹或历史记录");
+            if (id.startsWith("noop")) throw new IllegalStateException("扫码成功后重新加载源配置或重启 TVBox，再进入个人分类");
             JSONObject data;
             if (id.startsWith("playep:")) {
                 data = client.get("/pgc/player/web/v2/playurl", params("ep_id", digits(id.substring(7)), "qn", "80", "fnval", "4048", "fnver", "0", "fourk", "0"));
@@ -412,12 +412,12 @@ public class BiliStudy extends Spider {
         if ("status".equals(action)) {
             JSONObject user = client.userInfo();
             return card("auth:status", user.optString("uname", "未登录"), user.optBoolean("isLogin") ? "已登录" : "未登录", user.optString("face"))
-                .put("vod_content", "账号 UID：" + user.optString("mid") + "\n扫码成功后，请重新进入首页以刷新收藏夹筛选项。");
+                .put("vod_content", "账号 UID：" + user.optString("mid") + "\n扫码成功后，请重新加载源配置或重启 TVBox，以刷新收藏夹筛选项。");
         }
         startLogin();
         return card("auth:login", "用 Bilibili 手机客户端扫描封面二维码", qrMessage, qrPicture)
-            .put("vod_content", "打开 Bilibili 手机客户端扫一扫，确认登录。本页会在后台等待确认，成功时电视会提示；随后返回并刷新首页。\n二维码约 3 分钟有效，过期后重新进入本页生成。\n" + qrMessage)
-            .put("vod_play_from", "登录说明").put("vod_play_url", "扫码成功后返回首页$noop");
+            .put("vod_content", "打开 Bilibili 手机客户端扫一扫，确认登录。本页会在后台等待确认，成功时电视会提示；随后重新加载源配置或重启 TVBox，以刷新收藏夹。\n二维码约 3 分钟有效，过期后重新进入本页生成。\n" + qrMessage)
+            .put("vod_play_from", "登录说明").put("vod_play_url", "扫码成功后重载源配置$noop");
     }
 
     private synchronized void startLogin() throws Exception {
@@ -447,7 +447,7 @@ public class BiliStudy extends Spider {
                             synchronized (BiliStudy.class) {
                                 if (LOGIN_GENERATION.get() != generation) break;
                                 int status = client.pollQr(key);
-                                if (status == 0) { LocalServer.get().remove(qrPicture); qrMessage = "登录成功，请返回刷新首页"; toast(qrMessage); break; }
+                                if (status == 0) { LocalServer.get().remove(qrPicture); qrMessage = "登录成功，请重载源配置或重启 TVBox"; toast(qrMessage); break; }
                                 if (status == 86038) { qrMessage = "二维码已过期，重新进入本页"; break; }
                                 qrMessage = status == 86090 ? "已扫码，请在手机确认" : "等待扫码";
                             }
