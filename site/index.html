@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="面向 TVBox 的哔哩哔哩视频源：影视与账号、研究兴趣合集、视频查找。">
+  <title>哔哩研究室 · TVBox 视频源</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="header wrap">
+    <a class="brand" href="./" aria-label="哔哩研究室首页"><span class="brand-mark" aria-hidden="true">b.</span><span>哔哩研究室<small>FOR TVBOX</small></span></a>
+    <nav aria-label="主导航"><a href="#modules">功能</a><a href="#interests">兴趣合集</a><a class="github-link" href="https://github.com/shandianchengzi/bilibili-tvbox-forstudy" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></nav>
+  </header>
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="tiny-square" aria-hidden="true"></span> BILIBILI × TVBOX</p>
+        <h1 id="hero-title">把兴趣，<br><span>放到大屏上。</span></h1>
+        <p class="hero-description">从一集番剧到一次固件仿真。<br>用熟悉的遥控器，探索你的知识与灵感。</p>
+        <div class="hero-tags"><span>扫码登录</span><span>研究兴趣合集</span><span>全站视频查找</span></div>
+      </div>
+      <div class="hero-preview" aria-label="功能示意，非实时视频内容">
+        <div class="preview-top"><span class="window-dots" aria-hidden="true">● ● ●</span><span>你的大屏研究室</span><span class="preview-dot" aria-hidden="true"></span></div>
+        <div class="preview-body">
+          <p class="preview-label">发现下一份灵感</p><p class="preview-title">学一点，<br>再多一点。</p>
+          <div class="preview-grid"><span><b aria-hidden="true">⌘</b>固件仿真</span><span><b aria-hidden="true">✳</b>大模型应用</span><span><b aria-hidden="true">◎</b>数字电路</span><span><b aria-hidden="true">♫</b>听书 · 有声书</span></div>
+        </div>
+        <div class="preview-bottom"><span aria-hidden="true">← →</span> 让好奇心决定下一站 <span class="preview-hint">功能示意</span></div>
+      </div>
+    </section>
+
+    <section class="import-panel" aria-labelledby="import-title">
+      <div class="import-heading"><span class="section-number">01</span><div><h2 id="import-title">从一个链接开始</h2><p>复制下方地址，粘贴到 TVBox 的「配置地址 / 接口地址」。</p></div><span class="format-badge">JSON 订阅</span></div>
+      <div class="import-controls"><label class="sr-only" for="import-url">TVBox 配置地址</label><input id="import-url" type="url" readonly value="https://shandianchengzi.github.io/bilibili-tvbox-forstudy/tvbox.json" spellcheck="false"><button id="copy-button" type="button">复制地址 <span aria-hidden="true">↗</span></button></div>
+      <div class="import-footer"><span id="copy-message" role="status" aria-live="polite">适用于支持原生 Java 爬虫的 TVBox 分支</span><a id="config-link" href="./tvbox.json">查看配置文件 <span aria-hidden="true">↗</span></a></div>
+    </section>
+
+    <section id="modules" class="section" aria-labelledby="modules-title">
+      <div class="section-heading"><div><p class="eyebrow">ONE SOURCE, THREE WAYS</p><h2 id="modules-title">一个视频源，三种打开方式</h2></div><p class="section-subtitle">在 TVBox 中切换对应站点，即可进入。</p></div>
+      <div class="module-grid">
+        <article class="module-card"><span class="module-icon pink" aria-hidden="true">▶</span><p class="card-kicker">看你喜欢的</p><h3>哔哩影视与账号</h3><p>动态、收藏夹、历史记录，以及电影、综艺、纪录片、国创、剧集与番剧。</p><span class="card-note">个人内容需先扫码登录</span></article>
+        <article class="module-card"><span class="module-icon lavender" aria-hidden="true">✳</span><p class="card-kicker">沿着兴趣深入</p><h3>哔哩研究合集</h3><p>从嵌入式、芯片和数字电路，到 AI、同态加密与量子计算。按研究兴趣整理公开视频。</p><span class="card-note">也有听书与有声书分类</span></article>
+        <article class="module-card"><span class="module-icon sage" aria-hidden="true">⌕</span><p class="card-kicker">让问题带路</p><h3>哔哩视频查找</h3><p>输入关键词，查找公开视频；在支持筛选的分类中，按排序方式与视频时长缩小范围。</p><span class="card-note">选中视频后在 TVBox 播放</span></article>
+      </div>
+    </section>
+
+    <section class="start-section section" aria-labelledby="start-title">
+      <div class="section-heading"><div><p class="eyebrow">READY WHEN YOU ARE</p><h2 id="start-title">三步，回到大屏</h2></div></div>
+      <ol class="steps"><li><span class="step-number">1</span><div><h3>导入配置地址</h3><p>在 TVBox 设置中粘贴上方链接，保存并选择对应站点。</p></div></li><li><span class="step-number">2</span><div><h3>选择 Exo 播放器</h3><p>在播放器设置中选择 Exo。需要 Android 5.0 及以上，以及支持原生 Java Type 3 的 TVBox 分支。</p></div></li><li><span class="step-number">3</span><div><h3>用哔哩哔哩扫码登录</h3><p>进入「影视与账号」的扫码登录入口，用手机哔哩哔哩 App 扫描电视封面上的二维码并确认。</p></div></li></ol>
+      <p class="privacy-note"><span aria-hidden="true">◇</span><span>账号登录在电视端完成，Cookie 保留在设备上。本网页无需登录，也不接收你的账号凭据。</span></p>
+    </section>
+
+    <section id="interests" class="section" aria-labelledby="interests-title">
+      <div class="section-heading"><div><p class="eyebrow">FOLLOW YOUR CURIOSITY</p><h2 id="interests-title">你的兴趣，已经分好类</h2></div><a class="text-link" href="https://github.com/shandianchengzi/bilibili-tvbox-forstudy/edit/main/config/interests.json" target="_blank" rel="noopener noreferrer">自定义标签 <span aria-hidden="true">↗</span></a></div>
+      <div class="catalog-status"><span class="status-dot" id="status-dot" aria-hidden="true"></span><p id="catalog-summary" role="status">正在读取公开视频索引…</p><a href="./catalog.json">查看索引 <span aria-hidden="true">↗</span></a></div>
+      <div id="interest-grid" class="interest-grid" aria-live="polite"></div>
+      <noscript><p class="noscript">启用 JavaScript 可查看分类与索引状态。你仍可复制上方配置地址，或直接查看 <a href="./interests.json">分类配置</a>。</p></noscript>
+      <div class="filter-panel"><div><h3>按你的节奏筛选</h3><p>以下选项在 TVBox 内使用。</p></div><div class="filter-options"><div class="filter-row"><span class="filter-label">排序</span><span class="pill selected">综合排序</span><span class="pill">最多播放</span><span class="pill">最新发布</span><span class="pill">最多弹幕</span><span class="pill">最多收藏</span></div><div class="filter-row"><span class="filter-label">时长</span><span class="pill selected">全部时长</span><span class="pill">60 分钟以上</span><span class="pill">30–60 分钟</span><span class="pill">10–30 分钟</span><span class="pill">10 分钟以内</span></div></div></div>
+    </section>
+
+    <section class="about-section" aria-labelledby="about-title"><div><p class="eyebrow">A SMALL, OPEN PROJECT</p><h2 id="about-title">公开维护，留在你的掌控中。</h2><p>公开视频索引由 GitHub Actions 定期更新，配置文件通过 GitHub Pages 提供。上游访问失败时会保留可用的旧索引，并显示更新状态。</p></div><div class="about-details"><p><strong>观看权限</strong><br>影视内容遵循哔哩哔哩账号、会员与地区权限，无法额外解锁受限内容。</p><p><strong>设备兼容</strong><br>不同 TVBox 分支的接口与播放器能力不同，实际效果请以设备测试为准。</p><a href="https://github.com/shandianchengzi/bilibili-tvbox-forstudy/actions" target="_blank" rel="noopener noreferrer">查看自动更新记录 <span aria-hidden="true">↗</span></a></div></section>
+  </main>
+  <footer class="footer wrap"><a class="brand footer-brand" href="./"><span class="brand-mark" aria-hidden="true">b.</span><span>哔哩研究室</span></a><p>保持好奇，慢慢探索。</p><a href="https://github.com/shandianchengzi/bilibili-tvbox-forstudy" target="_blank" rel="noopener noreferrer">源码与使用说明 <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>

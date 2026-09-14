@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "knowledge",
+      "name": "知识精选",
+      "description": "计算机、电子技术与科学原理。",
+      "queries": ["计算机 科普", "硬件 原理"]
+    },
+    {
+      "id": "firmware_emulation",
+      "name": "嵌入式与固件仿真",
+      "description": "嵌入式系统、固件重托管与仿真：QEMU、FirmAE、Firmadyne、rehosting。",
+      "queries": ["固件仿真", "QEMU 嵌入式"]
+    },
+    {
+      "id": "chip_design",
+      "name": "芯片设计与 RISC-V",
+      "description": "RISC-V、SoC、处理器架构与芯片设计。",
+      "queries": ["RISC-V 芯片设计", "SoC 设计"]
+    },
+    {
+      "id": "hardware_design",
+      "name": "硬件设计与 PCB",
+      "description": "原理图、PCB、接口、电源与硬件调试。",
+      "queries": ["硬件设计", "PCB 设计"]
+    },
+    {
+      "id": "digital_circuits",
+      "name": "数字电路与 FPGA",
+      "description": "数字电路、Verilog、SystemVerilog、FPGA 与验证。",
+      "queries": ["FPGA Verilog", "数字电路设计"]
+    },
+    {
+      "id": "ai_applications",
+      "name": "AI 应用",
+      "description": "机器学习、计算机视觉、边缘 AI 与实际工程应用。",
+      "queries": ["AI 应用 实战", "边缘 AI"]
+    },
+    {
+      "id": "llm_applications",
+      "name": "大模型与智能体",
+      "description": "大模型应用、RAG、Agent、工具调用与工程落地。",
+      "queries": ["大模型 RAG", "智能体 Agent 实战"]
+    },
+    {
+      "id": "embodied_ai",
+      "name": "具身智能与机器人",
+      "description": "具身智能、机器人感知与控制、仿真和 sim-to-real。",
+      "queries": ["具身智能", "机器人 仿真"]
+    },
+    {
+      "id": "engineering",
+      "name": "复杂工程问题与调试",
+      "description": "系统调试、性能分析、故障定位与复杂工程问题解决。",
+      "queries": ["系统调试 性能分析", "复杂工程问题"]
+    },
+    {
+      "id": "homomorphic_encryption",
+      "name": "同态加密",
+      "description": "全同态加密、CKKS、BFV 与隐私计算。",
+      "queries": ["同态加密", "CKKS"]
+    },
+    {
+      "id": "quantum_computing",
+      "name": "量子计算",
+      "description": "量子计算原理、量子算法、量子电路与编程。",
+      "queries": ["量子计算", "量子算法"]
+    },
+    {
+      "id": "audiobooks",
+      "name": "听书 / 有声书",
+      "description": "听书、有声书、小说有声书与文学朗读。",
+      "queries": ["有声书 听书", "小说有声书"]
+    }
+  ]
+}

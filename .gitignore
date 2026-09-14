@@ -1,0 +1,12 @@
+/build/
+/dist/
+/.deps/
+__pycache__/
+*.py[cod]
+.DS_Store
+local.properties
+*.keystore
+*.jks
+.env
+.env.*
+!.env.example
