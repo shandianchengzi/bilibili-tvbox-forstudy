@@ -37,6 +37,10 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 BVID_RE = re.compile(r"BV[0-9A-Za-z]{10}\Z")
 KEY_RE = re.compile(r"[0-9a-f]{32}\Z")
 ID_RE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+# These are optional public search statistics, not display abbreviations.
+# video_review is the search API's danmaku count; review is the comment count.
+PUBLIC_STATS = ("play", "pubdate", "video_review", "favorites")
+MAX_PUBLIC_STAT = (1 << 63) - 1
 
 
 class CrawlError(Exception):
@@ -104,24 +108,41 @@ def clean_duration(value: Any) -> str:
     return ":".join([str(int(components[0]))] + [f"{int(c):02}" for c in components[1:]])
 
 
-def sanitize_item(item: Any) -> dict[str, str] | None:
+def clean_public_stat(value: Any) -> int | None:
+    """Keep exact counts/timestamps that the Android client can read as longs."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not re.fullmatch(r"[0-9]{1,19}", value):
+            return None
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= MAX_PUBLIC_STAT:
+        return None
+    return value
+
+
+def sanitize_item(item: Any) -> dict[str, str | int] | None:
     if not isinstance(item, dict):
         return None
     bvid, title = item.get("bvid"), clean_text(item.get("title"))
     if not isinstance(bvid, str) or not BVID_RE.fullmatch(bvid) or not title:
         return None
     # Whitelist fields. In particular, no cookies, auth values, or play URLs.
-    return {
+    result: dict[str, str | int] = {
         "bvid": bvid,
         "title": title,
         "pic": safe_image(item.get("pic")),
         "author": clean_text(item.get("author"), 100),
         "duration": clean_duration(item.get("duration")),
     }
+    for field in PUBLIC_STATS:
+        value = clean_public_stat(item.get(field))
+        if value is not None:
+            result[field] = value
+    return result
 
 
-def sanitize_items(items: Any, limit: int = 30) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
+def sanitize_items(items: Any, limit: int = 30) -> list[dict[str, str | int]]:
+    result: list[dict[str, str | int]] = []
     seen: set[str] = set()
     if not isinstance(items, list):
         return result

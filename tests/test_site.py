@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scripts.build_site import build_site, make_config, normalize_base_url
 from scripts.crawl import validate_config
-from scripts.verify import ZHOU_SHEN_CATEGORIES, dex_classes, validate_public_data, verify_jar, verify_modules, verify_site
+from scripts.verify import ZHOU_SHEN_CATEGORIES, dex_classes, validate_public_data, verify_catalog_pair, verify_jar, verify_modules, verify_site
 
 
 ENTRYPOINTS = ["Lcom/github/catvod/spider/BiliStudy;", "Lcom/google/zxing/qrcode/QRCodeWriter;"]
@@ -150,6 +150,23 @@ class PublicationTests(unittest.TestCase):
                       {"title": "url?bili_jct=private"}):
             with self.assertRaisesRegex(ValueError, "private credential"):
                 validate_public_data(value)
+
+    def test_catalog_accepts_old_items_and_optional_exact_statistics(self):
+        category = {"id": "firmware", "name": "固件仿真"}
+        config = {"categories": [category]}
+        old = {"bvid": "BV1xx411c7mD", "title": "固件仿真", "pic": "",
+               "author": "UP 主", "duration": "12:03"}
+        for stats in [{}, {"play": 0, "video_review": 10000, "favorites": (1 << 63) - 1,
+                           "pubdate": 1726272000}, {"play": None}]:
+            with self.subTest(stats=stats):
+                catalog = {"categories": [dict(category, items=[dict(old, **stats)])]}
+                verify_catalog_pair(config, catalog, "study")
+        for field in ["play", "pubdate", "video_review", "favorites"]:
+            for value in [-1, True, 1.0, "1000", "1.2万", (1 << 63), [], {}]:
+                with self.subTest(field=field, value=value):
+                    catalog = {"categories": [dict(category, items=[dict(old, **{field: value})])]}
+                    with self.assertRaisesRegex(ValueError, "exact nonnegative integer"):
+                        verify_catalog_pair(config, catalog, "study")
 
     def test_build_verify_and_failed_rebuild_preserves_previous(self):
         with tempfile.TemporaryDirectory() as directory:

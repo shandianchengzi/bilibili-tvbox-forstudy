@@ -16,6 +16,9 @@ import com.github.catvod.spider.bili.VideoMetadata;
 import com.github.catvod.spider.bili.QrLoginDialog;
 import com.github.catvod.spider.bili.QrPoller;
 import com.github.catvod.spider.bili.Recommendations;
+import com.github.catvod.spider.bili.VideoFilters;
+import com.github.catvod.spider.bili.PgcFilters;
+import com.github.catvod.spider.bili.FilteredPages;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.EncodeHintType;
 import com.google.zxing.common.BitMatrix;
@@ -72,6 +75,7 @@ public class BiliStudy extends Spider {
     private JSONArray mediaSnapshot;
     private long mediaLoadedAt;
     private long mediaAttemptedAt;
+    private String mediaFilterKey = "";
     private final Map<Integer, String> dynamicCursors = new ConcurrentHashMap<>();
     private final Map<Integer, JSONObject> historyCursors = new ConcurrentHashMap<>();
 
@@ -94,10 +98,15 @@ public class BiliStudy extends Spider {
             return new JSONObject().put("class", classes).put("filters", filters).toString();
         classes.put(category("all", "全部"));
         if ("media".equals(mode)) {
+            filters.put("all", PgcFilters.definitions(true));
             classes.put(category("dynamic", "动态"));
             classes.put(category("favorites", "收藏夹"));
             classes.put(category("history", "历史记录"));
-            for (int i = 0; i < PGC_TYPES.length; i++) classes.put(category("pgc:" + PGC_TYPES[i], PGC_NAMES[i]));
+            for (int i = 0; i < PGC_TYPES.length; i++) {
+                classes.put(category("pgc:" + PGC_TYPES[i], PGC_NAMES[i]));
+                filters.put("pgc:" + PGC_TYPES[i], PgcFilters.definitions(false));
+            }
+            JSONArray favoriteFilters = new JSONArray();
             if (hasSession()) {
                 try {
                     JSONArray folders = favoriteFolders();
@@ -106,46 +115,42 @@ public class BiliStudy extends Spider {
                         JSONObject f = folders.getJSONObject(i);
                         values.put(new JSONObject().put("n", f.optString("title")).put("v", f.optString("id")));
                     }
-                    if (values.length() > 0) filters.put("favorites", new JSONArray().put(
-                        new JSONObject().put("key", "fid").put("name", "收藏夹").put("value", values)));
+                    if (values.length() > 0) favoriteFilters.put(
+                        new JSONObject().put("key", "fid").put("name", "收藏夹").put("value", values));
                 } catch (Exception ignored) { /* Personal-category requests show the actual error. */ }
             }
+            filters.put("favorites", favoriteFilters.put(VideoFilters.playFilter()));
         } else {
             loadCatalog();
             JSONArray categories = interests.optJSONArray("categories");
+            JSONArray categoryValues = new JSONArray().put(new JSONObject().put("n", "全部").put("v", "all"));
             for (int i = 0; categories != null && i < categories.length(); i++) {
                 JSONObject c = categories.getJSONObject(i);
                 String id = "tag:" + c.getString("id");
                 classes.put(category(id, c.getString("name")));
+                categoryValues.put(new JSONObject().put("n", c.getString("name")).put("v", c.getString("id")));
                 JSONArray values = new JSONArray();
                 JSONArray queries = c.getJSONArray("queries");
                 for (int q = 0; q < queries.length(); q++) values.put(new JSONObject().put("n", queries.getString(q)).put("v", queries.getString(q)));
-                filters.put(id, new JSONArray()
-                    .put(new JSONObject().put("key", "keyword").put("name", "主题").put("value", values))
-                    .put(new JSONObject().put("key", "order").put("name", "排序").put("value", new JSONArray()
-                        .put(new JSONObject().put("n", "综合排序").put("v", "totalrank"))
-                        .put(new JSONObject().put("n", "最多点击").put("v", "click"))
-                        .put(new JSONObject().put("n", "最新发布").put("v", "pubdate"))
-                        .put(new JSONObject().put("n", "最多弹幕").put("v", "dm"))
-                        .put(new JSONObject().put("n", "最多收藏").put("v", "stow"))))
-                    .put(new JSONObject().put("key", "duration").put("name", "时长").put("value", new JSONArray()
-                        .put(new JSONObject().put("n", "全部").put("v", "0"))
-                        .put(new JSONObject().put("n", "60分钟以上").put("v", "4"))
-                        .put(new JSONObject().put("n", "30-60分钟").put("v", "3"))
-                        .put(new JSONObject().put("n", "10-30分钟").put("v", "2"))
-                        .put(new JSONObject().put("n", "10分钟以下").put("v", "1")))));
+                filters.put(id, appendFilters(new JSONArray()
+                    .put(new JSONObject().put("key", "keyword").put("name", "主题").put("value", values)), VideoFilters.definitions()));
             }
+            filters.put("all", appendFilters(new JSONArray().put(new JSONObject().put("key", "category")
+                    .put("name", "分类").put("value", categoryValues)), VideoFilters.definitions()));
         }
-        return new JSONObject().put("class", classes).put("filters", filters).toString();
+        return new JSONObject().put("class", classes).put("filters", filters).put("list", new JSONArray()).toString();
+    }
+
+    private static JSONArray appendFilters(JSONArray target, JSONArray extra) throws Exception {
+        for (int i = 0; i < extra.length(); i++) target.put(extra.get(i));
+        return target;
     }
 
     public String homeVideoContent() throws Exception {
         try {
             if ("account".equals(mode)) return accountCards().toString();
-            JSONArray videos = recommendationCards();
-            // TVBox's home callback has no page argument: return the complete current snapshot.
-            return new JSONObject().put("list", videos).put("page", 1).put("pagecount", 1)
-                    .put("limit", videos.length()).put("total", videos.length()).toString();
+            // A nonempty home list makes compatible clients create a duplicate recommendation tab.
+            return new JSONObject().put("list", new JSONArray()).toString();
         } catch (Exception e) { return errorPage(e).toString(); }
     }
 
@@ -156,10 +161,10 @@ public class BiliStudy extends Spider {
             if ("account".equals(mode)) return "account".equals(tid) ? accountCards().toString() : page(new JSONArray(), p, false).toString();
             if ("account".equals(tid) || (Arrays.asList("dynamic", "favorites", "history").contains(tid) && !hasSession()))
                 return accountNotice().toString();
-            if ("all".equals(tid)) return Recommendations.page(recommendationCards(), p, PAGE_SIZE).toString();
-            if (tid.startsWith("pgc:")) return pgc(tid.substring(4), p).toString();
+            if ("all".equals(tid)) return all(p, f).toString();
+            if (tid.startsWith("pgc:")) return pgc(tid.substring(4), p, f).toString();
             if ("dynamic".equals(tid)) return dynamics(p).toString();
-            if ("favorites".equals(tid)) return favorites(p, f.get("fid")).toString();
+            if ("favorites".equals(tid)) return favorites(p, f).toString();
             if ("history".equals(tid)) return history(p).toString();
             if (tid.startsWith("tag:")) return tagged(tid.substring(4), p, f).toString();
             return page(new JSONArray(), p, false).toString();
@@ -291,29 +296,52 @@ public class BiliStudy extends Spider {
     public boolean isVideoFormat(String url) { return url != null && (url.contains(".mpd") || url.contains(".m4s") || url.contains(".mp4")); }
     public boolean manualVideoCheck() { return false; }
 
-    private JSONObject pgc(String type, int p) throws Exception {
-        JSONObject data = client.get("/pgc/season/index/result", params("season_type", type, "type", "1", "page", String.valueOf(p), "pagesize", "20", "order", "3", "sort", "0"));
+    private JSONObject pgc(String type, int p, Map<String, String> filters) throws Exception {
+        JSONObject data = client.get("/pgc/season/index/result", PgcFilters.params(type, p, filters));
         JSONArray a = data.optJSONArray("list"), out = new JSONArray();
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject s = a.getJSONObject(i);
-            out.put(card("season:" + digits(s.optString("season_id")), s.optString("title"), s.optString("index_show"), s.optString("cover")));
+            out.put(card("season:" + digits(s.optString("season_id")), s.optString("title"), s.optString("index_show"), s.optString("cover"))
+                    .put("_pgc_order", s.optString("order")));
         }
         return page(out, p, data.optInt("has_next", 0) == 1 || data.optBoolean("has_next", false));
     }
 
-    private JSONArray recommendationCards() throws Exception {
-        if ("media".equals(mode)) return mediaRecommendations();
+    private JSONObject all(int p, Map<String, String> filters) throws Exception {
+        if ("media".equals(mode)) {
+            String type = filters.get("type");
+            if (Arrays.asList(PGC_TYPES).contains(type)) return pgc(type, p, filters);
+            return Recommendations.page(mediaRecommendations(filters), p, PAGE_SIZE);
+        }
         loadCatalog();
-        return searchCards(Recommendations.catalog(interests, catalog));
+        JSONObject configured = interests;
+        String category = filters.get("category");
+        if (category != null && !category.isEmpty() && !"all".equals(category)) {
+            JSONArray selected = new JSONArray(), categories = interests.getJSONArray("categories");
+            for (int i = 0; i < categories.length(); i++) {
+                JSONObject candidate = categories.getJSONObject(i);
+                if (category.equals(candidate.optString("id"))) selected.put(candidate);
+            }
+            configured = new JSONObject().put("categories", selected);
+        }
+        JSONArray videos = VideoFilters.apply(Recommendations.catalog(configured, catalog), filters, true);
+        return Recommendations.page(searchCards(videos), p, PAGE_SIZE);
     }
 
     /** Six independent PGC queries share one wall-clock budget, keeping home responsive. */
-    private synchronized JSONArray mediaRecommendations() throws Exception {
+    private synchronized JSONArray mediaRecommendations(Map<String, String> filters) throws Exception {
+        String key = PgcFilters.key(filters);
+        if (!key.equals(mediaFilterKey)) {
+            mediaSnapshot = null;
+            mediaLoadedAt = 0;
+            mediaAttemptedAt = 0;
+            mediaFilterKey = key;
+        }
         long now = System.currentTimeMillis();
         if (mediaSnapshot != null && now - mediaLoadedAt < 300000) return mediaSnapshot;
         if (now - mediaAttemptedAt < 30000) {
             if (mediaSnapshot != null && mediaSnapshot.length() > 0) return mediaSnapshot;
-            throw new IllegalStateException("影视推荐暂时不可用，请稍后刷新或进入电影、综艺等分类");
+            throw new IllegalStateException("影视列表暂时不可用，请稍后刷新或进入电影、综艺等分类");
         }
         mediaAttemptedAt = now;
         ExecutorService workers = Executors.newFixedThreadPool(PGC_TYPES.length, task -> {
@@ -323,17 +351,17 @@ public class BiliStudy extends Spider {
         });
         try {
             List<Callable<JSONArray>> requests = new ArrayList<>();
-            for (String type : PGC_TYPES) requests.add(() -> pgc(type, 1).getJSONArray("list"));
+            for (String type : PGC_TYPES) requests.add(() -> pgc(type, 1, filters).getJSONArray("list"));
             List<Future<JSONArray>> completed = workers.invokeAll(requests, 8, TimeUnit.SECONDS);
             List<JSONArray> groups = new ArrayList<>();
             for (Future<JSONArray> future : completed) {
                 try { groups.add(future.isCancelled() ? new JSONArray() : future.get()); }
                 catch (Exception ignored) { groups.add(new JSONArray()); }
             }
-            JSONArray fresh = Recommendations.interleave(groups, "vod_id");
+            JSONArray fresh = PgcFilters.sort(Recommendations.interleave(groups, "vod_id"), filters.get("order"));
             if (fresh.length() == 0) {
                 if (mediaSnapshot != null && mediaSnapshot.length() > 0) return mediaSnapshot;
-                throw new IllegalStateException("影视推荐暂时不可用，请稍后刷新或进入电影、综艺等分类");
+                throw new IllegalStateException("影视列表暂时不可用，请稍后刷新或进入电影、综艺等分类");
             }
             mediaSnapshot = fresh;
             mediaLoadedAt = System.currentTimeMillis();
@@ -352,17 +380,26 @@ public class BiliStudy extends Spider {
         return folders == null ? new JSONArray() : folders;
     }
 
-    private JSONObject favorites(int p, String fid) throws Exception {
+    private JSONObject favorites(int p, Map<String, String> filters) throws Exception {
+        String fid = filters.get("fid");
         if (fid == null || fid.isEmpty()) {
             JSONArray folders = favoriteFolders();
             if (folders.length() == 0) return page(new JSONArray(), p, false);
             fid = folders.getJSONObject(0).getString("id");
         }
-        JSONObject data = client.get("/x/v3/fav/resource/list", params("media_id", digits(fid), "pn", String.valueOf(p), "ps", "20", "platform", "web", "order", "mtime"));
+        final String folder = digits(fid);
+        return FilteredPages.load(p, hasPlayFilter(filters), upstream -> favoritePage(upstream, folder, filters));
+    }
+
+    private JSONObject favoritePage(int p, String fid, Map<String, String> filters) throws Exception {
+        JSONObject data = client.get("/x/v3/fav/resource/list", params("media_id", fid, "pn", String.valueOf(p), "ps", "20", "platform", "web", "order", "mtime"));
         JSONArray a = data.optJSONArray("medias"), out = new JSONArray();
         for (int i = 0; a != null && i < a.length(); i++) {
             JSONObject v = a.getJSONObject(i);
-            if (isBvid(v.optString("bvid"))) out.put(card("video:" + v.getString("bvid"), v.optString("title"), "收藏视频", v.optString("cover")));
+            JSONObject counts = v.optJSONObject("cnt_info");
+            JSONObject candidate = new JSONObject().put("play", counts == null ? JSONObject.NULL : counts.opt("play"));
+            if (isBvid(v.optString("bvid")) && VideoFilters.apply(new JSONArray().put(candidate), filters, false).length() > 0)
+                out.put(card("video:" + v.getString("bvid"), v.optString("title"), "收藏视频", v.optString("cover")));
         }
         return page(out, p, data.optBoolean("has_more", false));
     }
@@ -424,24 +461,31 @@ public class BiliStudy extends Spider {
         String duration = filters.get("duration");
         if (duration == null || !Arrays.asList("0", "1", "2", "3", "4").contains(duration)) duration = "0";
         try {
-            JSONObject data = client.search(keyword, p, order, duration);
-            return page(searchCards(data.optJSONArray("result")), p, p < data.optInt("numPages", p));
+            final String query = keyword, sort = order, length = duration;
+            return FilteredPages.load(p, hasPlayFilter(filters), upstream -> {
+                JSONObject data = client.search(query, upstream, sort, length);
+                JSONArray source = data.optJSONArray("result");
+                if (source == null) throw new IllegalStateException("搜索结果格式异常，请稍后重试");
+                JSONArray rows = searchCards(VideoFilters.apply(source, filters, false));
+                return page(rows, upstream, upstream < data.optInt("numPages", upstream));
+            });
         } catch (Exception e) {
             // Only use a broad category snapshot for unfiltered page 1; never silently substitute a different query.
-            if (p != 1 || filters.containsKey("keyword") || filters.containsKey("order") || !"0".equals(duration)) throw e;
+            if (p != 1 || filters.containsKey("keyword") || filters.containsKey("order") || !"0".equals(duration)
+                    || (filters.get("plays") != null && !"all".equals(filters.get("plays")))) throw e;
             JSONArray categories = catalog.optJSONArray("categories");
             for (int i = 0; categories != null && i < categories.length(); i++) {
                 JSONObject c = categories.getJSONObject(i);
                 if (!id.equals(c.optString("id"))) continue;
-                JSONArray a = c.optJSONArray("items"), out = new JSONArray();
-                for (int j = 0; a != null && j < a.length(); j++) {
-                    JSONObject v = a.getJSONObject(j);
-                    if (isBvid(v.optString("bvid"))) out.put(card("video:" + v.getString("bvid"), v.optString("title"), "缓存目录 · " + v.optString("author"), v.optString("pic")));
-                }
+                JSONArray out = searchCards(c.optJSONArray("items"));
                 if (out.length() > 0) return page(out, 1, false).put("msg", "实时请求失败，显示 Actions 公共缓存：" + c.optString("updated_at"));
             }
             throw e;
         }
+    }
+
+    private static boolean hasPlayFilter(Map<String, String> filters) {
+        return Arrays.asList("10k_100k", "100k_plus", "1k_10k", "lt_1k").contains(filters.get("plays"));
     }
 
     private JSONArray searchCards(JSONArray a) throws Exception {

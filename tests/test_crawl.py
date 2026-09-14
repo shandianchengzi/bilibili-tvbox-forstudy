@@ -85,6 +85,46 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("token", str(result))
         self.assertEqual(result["status"]["stale_categories"], 1)
 
+    def test_retains_exact_public_statistics_without_comment_count_alias(self):
+        raw = dict(ITEM, play="10000", pubdate=1726272000,
+                   video_review="0", favorites=12, review=9876)
+        result = crawl.build_catalog(CONFIG, lambda _: [raw], now=NOW)
+        item = result["categories"][0]["items"][0]
+        self.assertEqual({key: item[key] for key in crawl.PUBLIC_STATS},
+                         {"play": 10000, "pubdate": 1726272000, "video_review": 0, "favorites": 12})
+        self.assertNotIn("review", item)
+        self.assertNotIn("cookie", str(result))
+        self.assertNotIn("token", str(result))
+        self.assertNotIn("video_review", crawl.sanitize_item(dict(ITEM, review=9876)))
+
+    def test_missing_or_imprecise_statistics_never_become_zero(self):
+        invalid = [None, True, False, -1, 1.0, float("nan"), float("inf"),
+                   "", "1.2万", "10w", "1,000", "1e4", "+1000", "-1", "１", [], {},
+                   (1 << 63), str(1 << 63)]
+        for value in invalid:
+            with self.subTest(value=value):
+                raw = dict(ITEM, **{key: value for key in crawl.PUBLIC_STATS})
+                item = crawl.sanitize_item(raw)
+                self.assertTrue(all(key not in item for key in crawl.PUBLIC_STATS))
+        for value in [0, "0", " 00010 ", (1 << 63) - 1, str((1 << 63) - 1)]:
+            with self.subTest(value=value):
+                self.assertEqual(crawl.sanitize_item(dict(ITEM, play=value))["play"], int(value))
+
+    def test_cached_public_statistics_survive_refresh_failure(self):
+        previous = previous_catalog()
+        previous["categories"][0]["items"][0] = dict(
+            ITEM, play="100000", video_review=0, favorites="1.2万", pubdate=None)
+        def fail(_):
+            raise crawl.CrawlError("Bilibili HTTP 412")
+        result = crawl.build_catalog(CONFIG, fail, previous, now=NOW)
+        category = result["categories"][0]
+        self.assertEqual(category["status"], "stale")
+        self.assertEqual(category["updated_at"], BEFORE)
+        self.assertEqual(category["items"][0]["play"], 100000)
+        self.assertEqual(category["items"][0]["video_review"], 0)
+        self.assertNotIn("favorites", category["items"][0])
+        self.assertNotIn("pubdate", category["items"][0])
+
     def test_initial_failure_exposes_empty_category_without_invented_results(self):
         def fail(_):
             raise RuntimeError("https://api.example?secret=do-not-export")

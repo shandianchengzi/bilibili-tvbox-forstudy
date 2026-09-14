@@ -47,7 +47,8 @@ public final class BiliClientTest {
         logoutDuringVerification();
         playerQualityTransactions();
         detailQualityProbe();
-        mediaRecommendationTransactions();
+        mediaAllTransactions();
+        taggedPlayFilterTransactions();
         if ("1".equals(System.getenv("BILI_QR_LIVE_SMOKE"))) liveQrSmoke();
         if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) reportLivePlaybackSmoke();
         System.out.println("BiliClientTest: " + assertions + " assertions passed");
@@ -383,24 +384,28 @@ public final class BiliClientTest {
         failed.complete(1);
     }
 
-    /** Exercise all six real PGC callback requests, without calling an external service. */
-    private static void mediaRecommendationTransactions() throws Exception {
+    /** Exercise real PGC all/filter callbacks and cache identity with a synthetic transport. */
+    private static void mediaAllTransactions() throws Exception {
         List<FakeConnection> opened = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<Map<String, String>> queries = java.util.Collections.synchronizedList(new ArrayList<>());
         BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()), url -> {
             Map<String, String> query = new LinkedHashMap<>();
             for (String pair : url.getQuery().split("&")) {
                 String[] fields = pair.split("=", 2);
                 query.put(URLDecoder.decode(fields[0], "UTF-8"), URLDecoder.decode(fields[1], "UTF-8"));
             }
-            if (!url.getPath().equals("/pgc/season/index/result") || !"1".equals(query.get("page")))
-                throw new AssertionError("Recommendations must request the public PGC first pages");
+            if (!url.getPath().equals("/pgc/season/index/result"))
+                throw new AssertionError("Media all must request the public PGC catalog");
             try {
                 int type = Integer.parseInt(query.get("season_type"));
-                JSONArray rows = new JSONArray().put(new JSONObject().put("season_id", type)
+                int variant = "4".equals(query.get("order")) ? 100 : 0;
+                JSONArray rows = new JSONArray().put(new JSONObject().put("season_id", type + variant)
                         .put("title", "Type " + type).put("cover", "https://i0.hdslb.com/test.jpg"))
-                        .put(new JSONObject().put("season_id", 999).put("title", "Shared season"));
+                        .put(new JSONObject().put("season_id", 999 + variant).put("title", "Shared season"));
                 FakeConnection response = new FakeConnection(url.toString(), 200,
-                        new JSONObject().put("code", 0).put("data", new JSONObject().put("list", rows)).toString());
+                        new JSONObject().put("code", 0).put("data", new JSONObject()
+                                .put("list", rows).put("has_next", 1)).toString());
+                queries.add(query);
                 opened.add(response);
                 return response;
             } catch (Exception error) { throw new IOException("Invalid synthetic PGC fixture", error); }
@@ -409,18 +414,133 @@ public final class BiliClientTest {
         Field field = BiliStudy.class.getDeclaredField("client");
         field.setAccessible(true);
         field.set(spider, client);
-        JSONObject response = new JSONObject(spider.homeVideoContent());
+        equal(0, new JSONObject(spider.homeVideoContent()).getJSONArray("list").length(),
+                "Content home-video callback stays empty to avoid duplicate recommendations");
+        equal(0, new JSONObject(spider.homeContent(true)).getJSONArray("list").length(),
+                "Content home callback stays empty to avoid duplicate recommendations");
+        equal(0, opened.size(), "Hidden recommendations must not issue PGC HTTP requests");
+
+        JSONObject response = new JSONObject(spider.categoryContent("all", "1", true, null));
         JSONArray rows = response.getJSONArray("list");
         equal(7, rows.length(), "All six PGC categories plus shared season are present without duplicates");
         int[] order = {2, 7, 3, 4, 5, 1};
         for (int i = 0; i < order.length; i++)
-            equal("season:" + order[i], rows.getJSONObject(i).getString("vod_id"), "PGC recommendations interleave in category order");
+            equal("season:" + order[i], rows.getJSONObject(i).getString("vod_id"), "PGC all interleaves in category order");
         equal("season:999", rows.getJSONObject(6).getString("vod_id"), "Shared PGC item appears only once");
-        equal(6, opened.size(), "One home refresh requests exactly six PGC types");
-        for (FakeConnection connection : opened) check(connection.disconnected, "PGC recommendation releases its HTTP connection");
-        equal(7, new JSONObject(spider.homeVideoContent()).getJSONArray("list").length(), "Cached home keeps all PGC results");
-        equal(7, new JSONObject(spider.categoryContent("all", "1", false, null)).getInt("total"), "All tab uses the same media snapshot");
-        equal(6, opened.size(), "Cached home and all pagination do not refetch PGC data");
+        equal(6, opened.size(), "An initial all refresh requests exactly six PGC types");
+        for (Map<String, String> query : queries) {
+            equal("1", query.get("page"), "Broad all uses the first page of each PGC type");
+            equal("2", query.get("order"), "Default PGC ordering is passed to Bilibili");
+            equal("-1", query.get("season_status"), "Default PGC payment filter is passed to Bilibili");
+        }
+        equal(7, new JSONObject(spider.categoryContent("all", "1", false, null)).getInt("total"),
+                "Repeated all callback keeps the same snapshot");
+        equal(6, opened.size(), "Unchanged all selections reuse their PGC snapshot");
+
+        java.util.HashMap<String, String> selected = new java.util.HashMap<>();
+        selected.put("order", "4"); selected.put("season_status", "1");
+        JSONObject changed = new JSONObject(spider.categoryContent("all", "1", true, selected));
+        equal(7, changed.getJSONArray("list").length(), "Changing selections returns a complete new PGC snapshot");
+        equal("season:102", changed.getJSONArray("list").getJSONObject(0).getString("vod_id"),
+                "A cached default result cannot mask changed PGC selections");
+        equal(12, opened.size(), "Changing sort/payment selection refetches every PGC type");
+        for (int i = 6; i < queries.size(); i++) {
+            equal("4", queries.get(i).get("order"), "Selected PGC order reaches Bilibili");
+            equal("1", queries.get(i).get("season_status"), "Selected PGC payment option reaches Bilibili");
+        }
+        equal(changed.toString(), new JSONObject(spider.categoryContent("all", "1", true, selected)).toString(),
+                "Repeated selected all page preserves result and pagination");
+        equal(12, opened.size(), "The same changed selections reuse their own cached snapshot");
+
+        selected.put("type", "2");
+        JSONObject movies = new JSONObject(spider.categoryContent("all", "2", true, selected));
+        equal(13, opened.size(), "A selected PGC type requests just one real category page");
+        Map<String, String> movieQuery = queries.get(12);
+        equal("2", movieQuery.get("season_type"), "All type selection reaches the PGC season_type parameter");
+        equal("2", movieQuery.get("page"), "Selected-type all follows real upstream pagination");
+        equal("4", movieQuery.get("order"), "Selected-type pagination retains its ordering");
+        equal("1", movieQuery.get("season_status"), "Selected-type pagination retains its payment filter");
+        equal(2, movies.getInt("page"), "Selected-type page number is preserved");
+        equal(3, movies.getInt("pagecount"), "Upstream has_next remains navigable for a selected type");
+        equal(2, movies.getJSONArray("list").length(), "Single-type all does not return the six-type aggregate");
+        for (FakeConnection connection : opened)
+            check(connection.disconnected, "PGC all and category filters release their HTTP connections");
+    }
+
+    /** Verify the real tag callback scans past nonmatches and keeps local filters off the wire. */
+    private static void taggedPlayFilterTransactions() throws Exception {
+        List<Map<String, String>> queries = new ArrayList<>();
+        List<FakeConnection> opened = new ArrayList<>();
+        BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()), url -> {
+            if (!"/x/web-interface/wbi/search/type".equals(url.getPath()))
+                throw new AssertionError("Tag filtering should use only the signed video-search endpoint");
+            Map<String, String> query = new LinkedHashMap<>();
+            for (String pair : url.getQuery().split("&")) {
+                String[] fields = pair.split("=", 2);
+                query.put(URLDecoder.decode(fields[0], "UTF-8"), URLDecoder.decode(fields[1], "UTF-8"));
+            }
+            queries.add(query);
+            try {
+                int page = Integer.parseInt(query.get("page"));
+                JSONObject row = new JSONObject().put("bvid", "BV000000000" + page)
+                        .put("title", "Synthetic audiobook page " + page).put("author", "Synthetic author")
+                        .put("duration", "61:00").put("pic", "https://i0.hdslb.com/bfs/archive/synthetic.jpg");
+                if (page == 1) row.put("play", 99999);
+                if (page == 3) row.put("play", 100000);
+                JSONArray rows = new JSONArray().put(row);
+                if (page == 3) rows.put(new JSONObject().put("bvid", "BV0000000009")
+                        .put("title", "High-view short clip").put("play", 200000).put("duration", "05:00"));
+                FakeConnection response = new FakeConnection(url.toString(), 200,
+                        new JSONObject().put("code", 0).put("data", new JSONObject()
+                                .put("result", rows).put("numPages", 3)).toString());
+                opened.add(response);
+                return response;
+            } catch (Exception error) { throw new IOException("Invalid synthetic tag fixture", error); }
+        });
+        fixtureField(client, "mixinKey", "ea1db124af3c7062474693fa704f4ff8");
+        fixtureField(client, "mixinExpires", Long.MAX_VALUE);
+        fixtureField(client, "visitorAttempt", System.currentTimeMillis());
+        BiliStudy spider = new BiliStudy();
+        fixtureField(spider, "client", client);
+        fixtureField(spider, "mode", "study");
+        fixtureField(spider, "interests", new JSONObject().put("categories", new JSONArray()
+                .put(new JSONObject().put("id", "audiobooks").put("name", "听书")
+                        .put("queries", new JSONArray().put("默认听书关键词")))));
+        fixtureField(spider, "catalog", new JSONObject().put("categories", new JSONArray()));
+        fixtureField(spider, "loadedAt", System.currentTimeMillis());
+        java.util.HashMap<String, String> selected = new java.util.HashMap<>();
+        selected.put("keyword", "红星照耀中国"); selected.put("order", "click");
+        selected.put("duration", "4"); selected.put("plays", "100k_plus");
+        JSONObject result = new JSONObject(spider.categoryContent("tag:audiobooks", "1", true, selected));
+        JSONArray matches = result.getJSONArray("list");
+        equal(1, matches.length(), "A tag scan excludes below-range, unknown-count and wrong-duration results");
+        equal("video:BV0000000003", matches.getJSONObject(0).getString("vod_id"),
+                "A matching audiobook on the third upstream page appears in the first logical page");
+        equal(3, queries.size(), "An active local play-count filter scans the fixed three-page window");
+        for (int i = 0; i < 3; i++) {
+            Map<String, String> query = queries.get(i);
+            equal(String.valueOf(i + 1), query.get("page"), "The tag scan visits each upstream page once");
+            equal("video", query.get("search_type"), "Tag scanning remains an UP-video search");
+            equal("红星照耀中国", query.get("keyword"), "Selected tag keyword is forwarded unchanged");
+            equal("click", query.get("order"), "Selected tag ordering reaches Bilibili");
+            equal("4", query.get("duration"), "Selected duration reaches Bilibili and is enforced locally");
+            check(!query.containsKey("plays"), "Unsupported play-count ranges stay off the upstream request");
+            check(query.get("w_rid").matches("[0-9a-f]{32}"), "Each scanned page carries a WBI signature");
+        }
+        JSONObject unfiltered = new JSONObject(spider.categoryContent("tag:audiobooks", "1", false, null));
+        equal(4, queries.size(), "Without a play-count selection, a tag page issues only one upstream request");
+        equal(1, unfiltered.getJSONArray("list").length(), "Unfiltered tag pages retain lower-view results");
+        equal("1", queries.get(3).get("page"), "An unfiltered first page starts at upstream page one");
+        equal("默认听书关键词", queries.get(3).get("keyword"), "No filter uses the configured default keyword");
+        equal("totalrank", queries.get(3).get("order"), "No filter restores default relevance ordering");
+        equal("0", queries.get(3).get("duration"), "No filter restores all durations");
+        for (FakeConnection response : opened) check(response.disconnected, "Every scanned tag response is released");
+    }
+
+    private static void fixtureField(Object target, String name, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     /** Cloud IP restrictions are reported as blocked, never as a successful playback probe. */

@@ -13,6 +13,11 @@ import zlib
 from pathlib import Path
 from urllib.parse import urlsplit
 
+try:
+    from .crawl import MAX_PUBLIC_STAT, PUBLIC_STATS
+except ImportError:
+    from crawl import MAX_PUBLIC_STAT, PUBLIC_STATS
+
 PRIVATE_KEYS = {"cookie", "cookies", "sessdata", "bili_jct", "access_token", "refresh_token", "qrcode_key"}
 ZHOU_SHEN_CATEGORIES = {
     "zhou_shen_variety": "综艺", "zhou_shen_concert": "演唱会", "zhou_shen_songs": "歌曲",
@@ -124,6 +129,16 @@ def verify_catalog_pair(interests: object, catalog: object, label: str,
     if expected is not None:
         require([(item["id"], item["name"]) for item in configured] == list(expected.items()),
                 f"{label}: expected categories are missing or reordered")
+    for category in published:
+        items = category.get("items", [])
+        require(isinstance(items, list), f"{label}: catalog items must be a list")
+        for item in items:
+            require(isinstance(item, dict), f"{label}: catalog items must be objects")
+            # Old catalogs lack statistics; null also explicitly represents unknown.
+            for field in PUBLIC_STATS:
+                value = item.get(field)
+                require(value is None or (type(value) is int and 0 <= value <= MAX_PUBLIC_STAT),
+                        f"{label}: {field} must be an exact nonnegative integer or null")
 
 
 def verify_modules(sites: object, base: str) -> None:
