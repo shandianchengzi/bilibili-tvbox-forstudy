@@ -56,7 +56,7 @@ jobs:
 
       - name: Probe anonymous Bilibili QR generation and waiting status
         if: github.event_name != 'pull_request'
-        continue-on-error: true
+        continue-on-error: ${{ github.event_name == 'schedule' }}
         timeout-minutes: 2
         env:
           BILI_QR_LIVE_SMOKE: '1'

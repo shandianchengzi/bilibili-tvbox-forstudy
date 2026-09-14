@@ -170,7 +170,12 @@ public final class BiliClient {
         String key = result.optString("qrcode_key");
         String url = result.optString("url");
         if (key.isEmpty() || url.isEmpty()) throw new IOException("Bilibili 未返回登录二维码");
-        checkedUrl(url);
+        try { checkedUrl(url); }
+        catch (IOException invalid) {
+            URL address = new URL(url);
+            // Diagnose the public QR origin only; never log its query or login key.
+            throw new IOException("Bilibili 扫码地址需要兼容：" + address.getProtocol() + "://" + address.getHost());
+        }
         qrKey = key;
         return new JSONObject().put("url", url).put("qrcode_key", key);
     }
