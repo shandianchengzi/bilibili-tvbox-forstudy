@@ -31,6 +31,7 @@ public final class BiliClientTest {
         wbiUnicodeAndFreshTimestamp();
         cookieFreePlaybackHeaders();
         endpointHostBoundary();
+        scanPayloadBoundary();
         cookieHeaderValidation();
         legacyQrCookies();
         directQrTransaction();
@@ -95,7 +96,35 @@ public final class BiliClientTest {
         for (String address : new String[] {"http://api.bilibili.com/x", "https://api.bilibili.com.attacker.example/x",
                 "https://api.bilibili.com@attacker.example/x", "https://attacker.example@api.bilibili.com/x",
                 "https://api.bilibili.com:444/x", "https://127.0.0.1/x", "https://i0.hdslb.com/x",
-                "https://bilibili.com/x", "file:///etc/passwd"}) {
+                "https://bilibili.com/x", "https://account.bilibili.com/h5/account-h5/auth/scan-web", "file:///etc/passwd"}) {
+            rejectsIo(checked, address);
+        }
+    }
+
+    private static void scanPayloadBoundary() throws Exception {
+        Method checked = method("checkedScanUrl", String.class);
+        // The current HTTPS generate API returns an account.bilibili.com QR payload.
+        // This address must be displayable without making it an approved credential host.
+        for (String address : new String[] {
+                "https://account.bilibili.com/h5/account-h5/auth/scan-web?navhide=1&callback=close&qrcode_key=synthetic-qr-key&from=",
+                "https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=synthetic-qr-key",
+                "https://passport.bilibili.com/qrcode/h5/login?oauthKey=synthetic-qr-key"}) {
+            Fixture fixture = new Fixture();
+            fixture.generate(address);
+            equal(address, fixture.client.beginQr().getString("url"), "current and historical official scan payloads preserved");
+            fixture.complete();
+        }
+        for (String address : new String[] {
+                "http://account.bilibili.com/h5/account-h5/auth/scan-web",
+                "https://account.bilibili.com.attacker.example/h5/account-h5/auth/scan-web",
+                "https://account.bilibili.com@attacker.example/h5/account-h5/auth/scan-web",
+                "https://attacker.example@account.bilibili.com/h5/account-h5/auth/scan-web",
+                "https://account.bilibili.com:444/h5/account-h5/auth/scan-web",
+                "https://account.bilibili.com/h5/account-h5/auth/scan-web#untrusted",
+                "https://account.bilibili.com/other",
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
+                "https://passport.biligame.com/h5/account-h5/auth/scan-web",
+                "file:///etc/passwd"}) {
             rejectsIo(checked, address);
         }
     }
@@ -309,9 +338,13 @@ public final class BiliClientTest {
         }
 
         FakeConnection generate() throws Exception {
+            return generate("https://account.bilibili.com/h5/account-h5/auth/scan-web?navhide=1&callback=close&qrcode_key=synthetic-qr-key&from=");
+        }
+
+        FakeConnection generate(String scanUrl) throws Exception {
             return add(GENERATE, 200, new JSONObject().put("code", 0).put("data", new JSONObject()
                     .put("qrcode_key", "synthetic-qr-key")
-                    .put("url", "https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=synthetic-qr-key")).toString());
+                    .put("url", scanUrl)).toString());
         }
 
         FakeConnection poll(int code, String url) throws Exception {

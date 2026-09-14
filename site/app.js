@@ -40,7 +40,7 @@
     return element;
   }
 
-  function renderCategories(categories, catalog) {
+  function renderCategories(categories, catalog, target = grid) {
     const rows = catalog && Array.isArray(catalog.categories) ? catalog.categories : [];
     const indexed = new Map(rows.filter(row => row && typeof row.id === "string").map(row => [row.id, row]));
     const fragment = document.createDocumentFragment();
@@ -57,7 +57,7 @@
       card.append(heading, node("p", "", category.description || "按兴趣关键词整理公开视频。"), metadata);
       fragment.append(card);
     });
-    grid.replaceChildren(fragment);
+    target.replaceChildren(fragment);
   }
 
   async function fetchJSON(filename) {
@@ -118,4 +118,30 @@
     else if (items) summary.textContent = `${fresh + partial} 个分类已更新 · ${stale} 个保留旧索引 · 最近尝试 ${updated}`;
     else summary.textContent = `暂无可用视频索引 · 最近尝试 ${updated} · 请查看自动更新记录`;
   });
+  const zhouCategories = [
+    ["variety", "综艺"], ["concert", "演唱会"], ["songs", "歌曲"], ["interview", "采访"],
+    ["edit", "剪辑"], ["funny", "搞笑"], ["stage", "舞台"], ["kabu", "卡布"],
+  ].map(([id, name]) => ({ id: `zhou_shen_${id}`, name, description: `周深 · ${name}` }));
+  const zhouGrid = document.getElementById("zhou-shen-grid");
+  const zhouSummary = document.getElementById("zhou-shen-summary");
+  if (zhouGrid && zhouSummary) {
+    renderCategories(zhouCategories, null, zhouGrid);
+    Promise.allSettled([fetchJSON("zhou-shen-interests.json"), fetchJSON("zhou-shen-catalog.json")]).then(results => {
+      const config = results[0].status === "fulfilled" ? results[0].value : null;
+      const catalog = results[1].status === "fulfilled" ? results[1].value : null;
+      const categories = config && config.version === 1 && Array.isArray(config.categories)
+        ? config.categories.filter(row => row && typeof row.id === "string" && typeof row.name === "string") : zhouCategories;
+      const valid = catalog && catalog.schema === 1 && Array.isArray(catalog.categories);
+      renderCategories(categories.length ? categories : zhouCategories, valid ? catalog : null, zhouGrid);
+      if (!valid) {
+        zhouSummary.textContent = "暂时无法读取周深索引，仍可在 TVBox 中实时查找。";
+        return;
+      }
+      const ids = new Set(categories.map(row => row.id));
+      const rows = catalog.categories.filter(row => row && ids.has(row.id));
+      const count = rows.reduce((total, row) => total + (Array.isArray(row.items) ? row.items.length : 0), 0);
+      const fresh = rows.filter(row => row.status === "fresh").length;
+      zhouSummary.textContent = `${fresh} 个分类本轮更新 · ${count} 条公开索引`;
+    });
+  }
 })();

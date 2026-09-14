@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "zhou_shen_variety",
+      "name": "综艺",
+      "description": "周深参与的综艺节目与节目片段。",
+      "queries": ["周深 综艺"]
+    },
+    {
+      "id": "zhou_shen_concert",
+      "name": "演唱会",
+      "description": "周深演唱会现场、巡演与演出记录。",
+      "queries": ["周深 演唱会"]
+    },
+    {
+      "id": "zhou_shen_songs",
+      "name": "歌曲",
+      "description": "周深歌曲、音乐视频与演唱作品。",
+      "queries": ["周深 歌曲"]
+    },
+    {
+      "id": "zhou_shen_interview",
+      "name": "采访",
+      "description": "周深采访、访谈与幕后交流。",
+      "queries": ["周深 采访"]
+    },
+    {
+      "id": "zhou_shen_edit",
+      "name": "剪辑",
+      "description": "周深视频剪辑、混剪与精彩片段。",
+      "queries": ["周深 剪辑"]
+    },
+    {
+      "id": "zhou_shen_funny",
+      "name": "搞笑",
+      "description": "周深搞笑片段与趣味互动。",
+      "queries": ["周深 搞笑"]
+    },
+    {
+      "id": "zhou_shen_stage",
+      "name": "舞台",
+      "description": "周深舞台表演、晚会与现场演唱。",
+      "queries": ["周深 舞台"]
+    },
+    {
+      "id": "zhou_shen_kabu",
+      "name": "卡布",
+      "description": "周深卡布时期的演唱与相关回顾。",
+      "queries": ["周深 卡布"]
+    }
+  ]
+}

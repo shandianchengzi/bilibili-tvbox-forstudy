@@ -73,13 +73,25 @@ jobs:
           restore-keys: |
             public-catalog-v1-
 
+      - name: Restore last known Zhou Shen catalog
+        uses: actions/cache/restore@v6
+        with:
+          path: build/zhou-shen-catalog.json
+          key: public-zhou-shen-catalog-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            public-zhou-shen-catalog-v1-
+
       - name: Refresh public metadata
         if: github.event_name != 'pull_request'
-        run: python3 scripts/crawl.py --config config/interests.json --output build/catalog.json --previous build/catalog.json --timeout 12 --attempts 2 --delay 1.5
+        run: |
+          python3 scripts/crawl.py --config config/interests.json --output build/catalog.json --previous build/catalog.json --timeout 12 --attempts 2 --delay 1.5
+          python3 scripts/crawl.py --config config/zhou_shen.json --output build/zhou-shen-catalog.json --previous build/zhou-shen-catalog.json --timeout 12 --attempts 2 --delay 1.5
 
       - name: Prepare catalog without network for pull requests
         if: github.event_name == 'pull_request'
-        run: python3 scripts/crawl.py --config config/interests.json --output build/catalog.json --previous build/catalog.json --max-queries 0
+        run: |
+          python3 scripts/crawl.py --config config/interests.json --output build/catalog.json --previous build/catalog.json --max-queries 0
+          python3 scripts/crawl.py --config config/zhou_shen.json --output build/zhou-shen-catalog.json --previous build/zhou-shen-catalog.json --max-queries 0
 
       - name: Assemble and verify Pages files
         run: |
@@ -92,6 +104,13 @@ jobs:
         with:
           path: build/catalog.json
           key: public-catalog-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save validated public Zhou Shen catalog
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: build/zhou-shen-catalog.json
+          key: public-zhou-shen-catalog-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Downloadable artifacts remain available even if Pages is not enabled yet.
       - name: Upload plugin and complete static site

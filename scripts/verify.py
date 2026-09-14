@@ -14,6 +14,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 PRIVATE_KEYS = {"cookie", "cookies", "sessdata", "bili_jct", "access_token", "refresh_token", "qrcode_key"}
+ZHOU_SHEN_CATEGORIES = {
+    "zhou_shen_variety": "综艺", "zhou_shen_concert": "演唱会", "zhou_shen_songs": "歌曲",
+    "zhou_shen_interview": "采访", "zhou_shen_edit": "剪辑", "zhou_shen_funny": "搞笑",
+    "zhou_shen_stage": "舞台", "zhou_shen_kabu": "卡布",
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -99,8 +104,29 @@ def verify_jar(path: Path) -> dict[str, object]:
             "size": len(content), "classes": len(classes)}
 
 
+def verify_catalog_pair(interests: object, catalog: object, label: str,
+                        expected: dict[str, str] | None = None) -> None:
+    require(isinstance(interests, dict) and isinstance(catalog, dict), f"{label}: catalog/config must be objects")
+    configured, published = interests.get("categories"), catalog.get("categories")
+    require(isinstance(configured, list) and isinstance(published, list), f"{label}: categories must be lists")
+    require(all(isinstance(item, dict) and isinstance(item.get("id"), str)
+                and isinstance(item.get("name"), str) for item in configured + published),
+            f"{label}: category IDs and names are required")
+    configured_ids = [item["id"] for item in configured]
+    published_ids = [item["id"] for item in published]
+    require(len(set(configured_ids)) == len(configured_ids)
+            and len(set(published_ids)) == len(published_ids), f"{label}: duplicate category IDs")
+    require({item["id"]: item["name"] for item in configured}
+            == {item["id"]: item["name"] for item in published},
+            f"{label}: interest categories do not match the catalog")
+    if expected is not None:
+        require([(item["id"], item["name"]) for item in configured] == list(expected.items()),
+                f"{label}: expected categories are missing or reordered")
+
+
 def verify_site(root: Path) -> dict[str, object]:
-    for name in ("index.html", "tvbox.json", "interests.json", "catalog.json", "build-info.json", ".nojekyll"):
+    for name in ("index.html", "tvbox.json", "interests.json", "catalog.json", "zhou-shen-interests.json",
+                 "zhou-shen-catalog.json", "build-info.json", ".nojekyll"):
         require((root / name).is_file(), f"published file missing: {name}")
     for path in root.rglob("*"):
         require(not path.is_symlink(), f"symlink cannot be published: {path}")
@@ -125,12 +151,19 @@ def verify_site(root: Path) -> dict[str, object]:
     base = spider_url.rsplit("/", 1)[0]
     for site in sites:
         require(site.get("type") == 3 and site.get("api") == "csp_BiliStudy", "invalid native TVBox site entry")
+        require(site.get("searchable") == 1, "all TVBox modules must retain video search")
         extend = json.loads(site.get("ext", "{}"))
         validate_public_data(extend, "site.ext")
-        modes.add(extend.get("mode"))
-        require(extend.get("catalog") == base + "/catalog.json", "catalog URL is inconsistent")
-        require(extend.get("interests") == base + "/interests.json", "interests URL is inconsistent")
-    require(modes == {"media", "study", "search"}, "TVBox module modes missing")
+        mode = extend.get("mode")
+        modes.add(mode)
+        require(site.get("key") == f"bili_study_{mode}", "TVBox module key is inconsistent")
+        prefix = "zhou-shen-" if mode == "zhou_shen" else ""
+        require(extend.get("catalog") == f"{base}/{prefix}catalog.json", "catalog URL is inconsistent")
+        require(extend.get("interests") == f"{base}/{prefix}interests.json", "interests URL is inconsistent")
+    require(modes == {"media", "study", "zhou_shen"}, "TVBox module modes missing")
+    verify_catalog_pair(read_json(root / "interests.json"), read_json(root / "catalog.json"), "study")
+    verify_catalog_pair(read_json(root / "zhou-shen-interests.json"),
+                        read_json(root / "zhou-shen-catalog.json"), "zhou_shen", ZHOU_SHEN_CATEGORIES)
     return checksums
 
 

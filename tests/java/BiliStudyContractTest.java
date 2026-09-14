@@ -31,7 +31,22 @@ public final class BiliStudyContractTest {
             assertValues(filters, "duration", "0", "4", "3", "2", "1");
         }
         if (!audiobooks) throw new AssertionError("Requested audiobook category is missing");
-        System.out.println("BiliStudyContractTest: all categories expose requested order and duration filters");
+        JSONObject zhou = new JSONObject(new String(Files.readAllBytes(Paths.get("config/zhou_shen.json")), StandardCharsets.UTF_8));
+        set(spider, "mode", "zhou_shen");
+        set(spider, "interests", zhou);
+        set(spider, "loadedAt", System.currentTimeMillis());
+        JSONObject zhouHome = new JSONObject(spider.homeContent(true));
+        String[] expectedNames = {"综艺", "演唱会", "歌曲", "采访", "剪辑", "搞笑", "舞台", "卡布"};
+        JSONArray visible = zhouHome.getJSONArray("class");
+        if (visible.length() != expectedNames.length + 1) throw new AssertionError("Zhou Shen must show eight categories plus account");
+        for (int i = 0; i < expectedNames.length; i++) {
+            JSONObject row = visible.getJSONObject(i + 1);
+            if (!expectedNames[i].equals(row.getString("type_name"))) throw new AssertionError("Zhou Shen categories must match requested order");
+            JSONArray filters = zhouHome.getJSONObject("filters").getJSONArray(row.getString("type_id"));
+            assertValues(filters, "order", "totalrank", "click", "pubdate", "dm", "stow");
+            assertValues(filters, "duration", "0", "4", "3", "2", "1");
+        }
+        System.out.println("BiliStudyContractTest: study and Zhou Shen categories expose all requested filters");
     }
     private static void set(Object object, String name, Object value) throws Exception {
         Field field = BiliStudy.class.getDeclaredField(name); field.setAccessible(true); field.set(object, value);

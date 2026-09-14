@@ -35,22 +35,25 @@ def write_json(path: Path, value: object) -> None:
 
 def make_config(base_url: str, jar_name: str, md5: str) -> dict[str, object]:
     base_url = normalize_base_url(base_url)
-    modules = [("media", "Bilibili 影视"), ("study", "Bilibili 合集"), ("search", "视频查找")]
+    modules = [("media", "Bilibili 影视", ""), ("study", "Bilibili 合集", ""),
+               ("zhou_shen", "Bilibili 周深", "zhou-shen-")]
     return {
         "spider": f"{base_url}/{jar_name};md5;{md5}",
         "sites": [{
             "key": f"bili_study_{mode}", "name": name, "type": 3, "api": "csp_BiliStudy",
             "searchable": 1, "quickSearch": 0, "filterable": 1, "playerType": 2,
-            "ext": json.dumps({"mode": mode, "catalog": base_url + "/catalog.json",
-                               "interests": base_url + "/interests.json"}, ensure_ascii=False, separators=(",", ":")),
-        } for mode, name in modules],
+            "ext": json.dumps({"mode": mode, "catalog": f"{base_url}/{prefix}catalog.json",
+                               "interests": f"{base_url}/{prefix}interests.json"}, ensure_ascii=False, separators=(",", ":")),
+        } for mode, name, prefix in modules],
         "parses": [], "lives": [], "flags": [],
     }
 
 
 def build_site(source: Path, output: Path, interests_path: Path, catalog_path: Path,
                jar_path: Path, base_url: str = DEFAULT_BASE_URL, revision: str = "local",
-               generated_at: str | None = None) -> dict[str, object]:
+               generated_at: str | None = None, *,
+               zhou_shen_interests_path: Path = Path("config/zhou_shen.json"),
+               zhou_shen_catalog_path: Path = Path("build/zhou-shen-catalog.json")) -> dict[str, object]:
     base_url = normalize_base_url(base_url)
     require(source.is_dir(), f"site asset directory missing: {source}")
     require((source / "index.html").is_file(), "site/index.html is required")
@@ -59,8 +62,12 @@ def build_site(source: Path, output: Path, interests_path: Path, catalog_path: P
             and output_root not in source_root.parents, "output cannot overlap source assets")
     interests = read_json(interests_path)
     catalog = read_json(catalog_path)
+    zhou_shen_interests = read_json(zhou_shen_interests_path)
+    zhou_shen_catalog = read_json(zhou_shen_catalog_path)
     require(isinstance(interests, dict), "interests.json must be an object")
     require(isinstance(catalog, dict), "catalog.json must be an object")
+    require(isinstance(zhou_shen_interests, dict), "zhou-shen-interests.json must be an object")
+    require(isinstance(zhou_shen_catalog, dict), "zhou-shen-catalog.json must be an object")
     checksums = verify_jar(jar_path)
     jar_name = f"bili-study.{checksums['sha256'][:16]}.jar"
     if generated_at is None:
@@ -72,6 +79,8 @@ def build_site(source: Path, output: Path, interests_path: Path, catalog_path: P
         "base_url": base_url, "config_url": base_url + "/tvbox.json",
         "jar": {**checksums, "file": jar_name, "url": base_url + "/" + jar_name},
         "catalog": {"generated_at": catalog.get("generated_at"), "status": catalog.get("status", "unknown")},
+        "zhou_shen_catalog": {"generated_at": zhou_shen_catalog.get("generated_at"),
+                              "status": zhou_shen_catalog.get("status", "unknown")},
     }
 
     # Stage all files so a failed validation cannot replace the previous local build.
@@ -95,6 +104,8 @@ def build_site(source: Path, output: Path, interests_path: Path, catalog_path: P
         shutil.copyfile(jar_path, stage / "bili-study.jar")
         write_json(stage / "interests.json", interests)
         write_json(stage / "catalog.json", catalog)
+        write_json(stage / "zhou-shen-interests.json", zhou_shen_interests)
+        write_json(stage / "zhou-shen-catalog.json", zhou_shen_catalog)
         write_json(stage / "tvbox.json", make_config(base_url, jar_name, str(checksums["md5"])))
         write_json(stage / "build-info.json", info)
         (stage / ".nojekyll").write_text("", encoding="utf-8")
@@ -116,12 +127,16 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("dist/site"))
     parser.add_argument("--interests", type=Path, default=Path("config/interests.json"))
     parser.add_argument("--catalog", type=Path, default=Path("build/catalog.json"))
+    parser.add_argument("--zhou-shen-interests", type=Path, default=Path("config/zhou_shen.json"))
+    parser.add_argument("--zhou-shen-catalog", type=Path, default=Path("build/zhou-shen-catalog.json"))
     parser.add_argument("--jar", type=Path, default=Path("dist/bili-study.jar"))
     parser.add_argument("--revision", default=os.environ.get("GITHUB_SHA", "local"))
     args = parser.parse_args()
     try:
         info = build_site(args.source, args.output, args.interests, args.catalog, args.jar,
-                          args.base_url, args.revision)
+                          args.base_url, args.revision,
+                          zhou_shen_interests_path=args.zhou_shen_interests,
+                          zhou_shen_catalog_path=args.zhou_shen_catalog)
     except (ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="面向 TVBox 的哔哩哔哩视频源：影视与账号、研究兴趣合集、视频查找。">
+  <meta name="description" content="面向 TVBox 的哔哩哔哩视频源：影视与账号、研究兴趣合集、周深专区。">
   <title>哔哩研究室 · TVBox 视频源</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" defer></script>
@@ -44,7 +44,7 @@
       <div class="module-grid">
         <article class="module-card"><span class="module-icon pink" aria-hidden="true">▶</span><p class="card-kicker">看你喜欢的</p><h3>Bilibili 影视</h3><p>动态、收藏夹、历史记录，以及电影、综艺、纪录片、国创、剧集与番剧。</p><span class="card-note">个人内容需先扫码登录</span></article>
         <article class="module-card"><span class="module-icon lavender" aria-hidden="true">✳</span><p class="card-kicker">沿着兴趣深入</p><h3>Bilibili 合集</h3><p>从嵌入式、芯片和数字电路，到 AI、同态加密与量子计算。按研究兴趣整理公开视频。</p><span class="card-note">也有听书与有声书分类</span></article>
-        <article class="module-card"><span class="module-icon sage" aria-hidden="true">⌕</span><p class="card-kicker">让问题带路</p><h3>视频查找</h3><p>输入关键词，查找公开视频；在支持筛选的分类中，按排序方式与视频时长缩小范围。</p><span class="card-note">详情显示 BV 号、发布时间与播放量</span></article>
+        <article class="module-card"><span class="module-icon sage" aria-hidden="true">♪</span><p class="card-kicker">一起听周深</p><h3>Bilibili 周深</h3><p>综艺、演唱会、歌曲、采访、剪辑、搞笑、舞台、卡布。按分类找到想看的周深视频。</p><span class="card-note">支持关键词搜索、排序与时长筛选</span></article>
       </div>
     </section>
 
@@ -60,6 +60,12 @@
       <div id="interest-grid" class="interest-grid" aria-live="polite"></div>
       <noscript><p class="noscript">启用 JavaScript 可查看分类与索引状态。你仍可复制上方配置地址，或直接查看 <a href="./interests.json">分类配置</a>。</p></noscript>
       <div class="filter-panel"><div><h3>按你的节奏筛选</h3><p>以下选项在 TVBox 内使用。</p></div><div class="filter-options"><div class="filter-row"><span class="filter-label">排序</span><span class="pill selected">综合排序</span><span class="pill">最多点击</span><span class="pill">最新发布</span><span class="pill">最多弹幕</span><span class="pill">最多收藏</span></div><div class="filter-row"><span class="filter-label">时长</span><span class="pill selected">全部</span><span class="pill">60 分钟以上</span><span class="pill">30–60 分钟</span><span class="pill">10–30 分钟</span><span class="pill">10 分钟以下</span></div></div></div>
+    </section>
+
+    <section id="zhou-shen" class="section" aria-labelledby="zhou-shen-title">
+      <div class="section-heading"><div><p class="eyebrow">ZHOU SHEN</p><h2 id="zhou-shen-title">周深专区</h2></div><p class="section-subtitle">八个分类，搜索与筛选都可在 TVBox 中使用。</p></div>
+      <div class="catalog-status"><p id="zhou-shen-summary" role="status">正在读取周深公开视频索引…</p><a href="./zhou-shen-catalog.json">查看索引 ↗</a></div>
+      <div id="zhou-shen-grid" class="interest-grid" aria-live="polite"></div>
     </section>
 
     <section class="about-section" aria-labelledby="about-title"><div><p class="eyebrow">A SMALL, OPEN PROJECT</p><h2 id="about-title">公开维护，留在你的掌控中。</h2><p>公开视频索引由 GitHub Actions 定期更新，配置文件通过 GitHub Pages 提供。上游访问失败时会保留可用的旧索引，并显示更新状态。</p></div><div class="about-details"><p><strong>观看权限</strong><br>影视内容遵循哔哩哔哩账号、会员与地区权限，无法额外解锁受限内容。</p><p><strong>设备兼容</strong><br>不同 TVBox 分支的接口与播放器能力不同，实际效果请以设备测试为准。</p><a href="https://github.com/shandianchengzi/bilibili-tvbox-forstudy/actions" target="_blank" rel="noopener noreferrer">查看自动更新记录 <span aria-hidden="true">↗</span></a></div></section>

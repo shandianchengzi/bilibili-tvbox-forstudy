@@ -154,11 +154,12 @@ public class BiliStudy extends Spider {
             Matcher ep = Pattern.compile("(?:^|/)(ep|ss)([0-9]+)").matcher(key.trim());
             if (bv.find()) return page(new JSONArray().put(card("video:" + bv.group(), bv.group(), "打开视频", "")), 1, false).toString();
             if (ep.find()) return page(new JSONArray().put(card((ep.group(1).equals("ep") ? "ep:" : "season:") + ep.group(2), ep.group(), "打开影视", "")), 1, false).toString();
-            JSONObject data = client.search(key.trim(), p, "totalrank");
+            String keyword = "zhou_shen".equals(mode) && !key.contains("周深") ? "周深 " + key.trim() : key.trim();
+            JSONObject data = client.search(keyword, p, "totalrank");
             JSONArray result = searchCards(data.optJSONArray("result"));
             // Search both authored videos and licensed shows; one failed secondary endpoint does not discard videos.
             try {
-                for (String kind : Arrays.asList("media_ft", "media_bangumi")) {
+                for (String kind : "media".equals(mode) ? Arrays.asList("media_ft", "media_bangumi") : java.util.Collections.<String>emptyList()) {
                 JSONObject shows = client.get("/x/web-interface/wbi/search/type", params("search_type", kind, "keyword", key, "page", pg));
                 JSONArray a = shows.optJSONArray("result");
                 for (int i = 0; a != null && i < a.length(); i++) {

@@ -170,12 +170,7 @@ public final class BiliClient {
         String key = result.optString("qrcode_key");
         String url = result.optString("url");
         if (key.isEmpty() || url.isEmpty()) throw new IOException("Bilibili 未返回登录二维码");
-        try { checkedUrl(url); }
-        catch (IOException invalid) {
-            URL address = new URL(url);
-            // Diagnose the public QR origin only; never log its query or login key.
-            throw new IOException("Bilibili 扫码地址需要兼容：" + address.getProtocol() + "://" + address.getHost());
-        }
+        checkedScanUrl(url);
         qrKey = key;
         return new JSONObject().put("url", url).put("qrcode_key", key);
     }
@@ -476,6 +471,26 @@ public final class BiliClient {
     private static boolean isPassport(URL url) {
         return url.getHost().equalsIgnoreCase("passport.bilibili.com") || url.getHost().equalsIgnoreCase("passport.biligame.com");
     }
+
+    /** QR content is displayed for the phone; it is never an authenticated API request. */
+    private static URL checkedScanUrl(String value) throws IOException {
+        try {
+            URL url = new URL(value);
+            String host = url.getHost().toLowerCase(Locale.ROOT);
+            String path = url.getPath();
+            boolean current = host.equals("account.bilibili.com") && path.equals("/h5/account-h5/auth/scan-web");
+            boolean legacy = host.equals("passport.bilibili.com")
+                    && (path.equals("/h5-app/passport/login/scan") || path.equals("/qrcode/h5/login"));
+            if (!url.getProtocol().equals("https") || (!current && !legacy)
+                    || url.getUserInfo() != null || url.getRef() != null
+                    || (url.getPort() != -1 && url.getPort() != 443))
+                throw new IOException("不支持的 Bilibili 扫码地址");
+            return url;
+        } catch (java.net.MalformedURLException invalid) {
+            throw new IOException("不支持的 Bilibili 扫码地址");
+        }
+    }
+
     private static URL checkedUrl(String value) throws IOException {
         try {
             URL url = new URL(value);
