@@ -1,9 +1,12 @@
 package com.github.catvod.spider.bili;
 
 import android.content.SharedPreferences;
+import com.github.catvod.spider.BiliStudy;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -13,6 +16,7 @@ import java.lang.reflect.Proxy;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -41,7 +45,10 @@ public final class BiliClientTest {
         rejectedCandidatePreservesAccount();
         cancelDuringVerification();
         logoutDuringVerification();
+        playerQualityTransactions();
+        detailQualityProbe();
         if ("1".equals(System.getenv("BILI_QR_LIVE_SMOKE"))) liveQrSmoke();
+        if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) livePlaybackSmoke();
         System.out.println("BiliClientTest: " + assertions + " assertions passed");
     }
 
@@ -316,6 +323,180 @@ public final class BiliClientTest {
         int status = client.pollQr(qr.getString("qrcode_key"));
         equal(86101, status, "unscanned live QR waits for scanning");
         System.out.println("BiliClient live QR smoke: host=" + new URL(qr.getString("url")).getHost() + ", status=" + status);
+    }
+
+    private static void playerQualityTransactions() throws Exception {
+        LocalServer.get().clear();
+        PlaybackFixture ugc = playback(false, "120", playbackDash());
+        JSONObject result = new JSONObject(ugc.spider.playerContent("视频 · 4K", "play:BV1xx411c7mD:123@qn=120", new ArrayList<>()));
+        check(readManifest(result).contains("id=\"video_120\""), "UGC manual choice reaches exact 4K manifest");
+        ugc.complete(1);
+
+        PlaybackFixture pgc = playback(true, "64", playbackDash());
+        result = new JSONObject(pgc.spider.playerContent("正片 · 720P", "playep:123@qn=64", new ArrayList<>()));
+        check(readManifest(result).contains("id=\"video_64\""), "PGC result.video_info unwraps into exact 720P manifest");
+        pgc.complete(1);
+
+        PlaybackFixture legacy = playback(false, "80", playbackDash());
+        result = new JSONObject(legacy.spider.playerContent("视频", "play:BV1xx411c7mD:123", new ArrayList<>()));
+        check(readManifest(result).contains("id=\"video_80\""), "Old playback IDs retain automatic 1080P preference");
+        legacy.complete(1);
+
+        PlaybackFixture downgraded = playback(false, "120", playbackDurl(64));
+        result = new JSONObject(downgraded.spider.playerContent("视频 · 4K", "play:BV1xx411c7mD:123@qn=120", new ArrayList<>()));
+        equal("", result.getString("url"), "Server-downgraded durl is never mislabeled and played as selected 4K");
+        check(result.getString("msg").contains("4K"), "Downgrade failure identifies the unavailable requested quality");
+        downgraded.complete(1);
+
+        PlaybackFixture invalid = playback(false, "120", playbackDash());
+        for (String suffix : new String[] {"", "0", "-1", "abc", "120@qn=64", "120&other=1", "10000"}) {
+            result = new JSONObject(invalid.spider.playerContent("视频", "play:BV1xx411c7mD:123@qn=" + suffix, new ArrayList<>()));
+            equal("", result.getString("url"), "Invalid quality suffix cannot produce playback");
+            check(!result.getString("msg").isEmpty(), "Invalid quality suffix returns an actionable error");
+        }
+        invalid.complete(0);
+        LocalServer.get().clear();
+    }
+
+    private static void detailQualityProbe() throws Exception {
+        Method choices = BiliStudy.class.getDeclaredMethod("qualityChoices", JSONObject.class);
+        choices.setAccessible(true);
+        PlaybackFixture available = playback(false, "127", playbackDurl(64));
+        JSONObject vod = new JSONObject().put("vod_content", "Original description")
+                .put("vod_play_from", "视频").put("vod_play_url", "第一集$play:BV1xx411c7mD:123");
+        JSONObject expanded = (JSONObject) choices.invoke(available.spider, vod);
+        check(expanded.getString("vod_play_from").contains("720P"), "Detail callback exposes the probed playable quality");
+        check(expanded.getString("vod_play_url").contains("play:BV1xx411c7mD:123@qn=64"), "Detail callback binds exact quality to episode ID");
+        check(expanded.getString("vod_content").startsWith("Original description"), "Quality choices preserve existing description");
+        available.complete(1);
+
+        PlaybackFixture failed = new PlaybackFixture("/x/player/wbi/playurl", playbackParams(false, "127"),
+                new JSONObject().put("code", -104).put("message", "synthetic API failure"));
+        vod = new JSONObject().put("vod_content", "Original description")
+                .put("vod_play_from", "视频").put("vod_play_url", "第一集$play:BV1xx411c7mD:123");
+        JSONObject preserved = (JSONObject) choices.invoke(failed.spider, vod);
+        equal("视频", preserved.getString("vod_play_from"), "Failed quality probe preserves the original source line");
+        equal("第一集$play:BV1xx411c7mD:123", preserved.getString("vod_play_url"), "Failed quality probe preserves original episode IDs");
+        check(preserved.getString("vod_content").startsWith("Original description"), "Failed quality probe preserves description");
+        check(preserved.getString("vod_content").contains("重新进入详情页"), "Failed quality probe explains retry without hiding playback");
+        failed.complete(1);
+    }
+
+    /** Opt-in anonymous API check; validates manifests without downloading any media. */
+    private static void livePlaybackSmoke() throws Exception {
+        BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()));
+        String bvid = "BV1xx411c7mD";
+        JSONObject view = client.get("/x/web-interface/view", map("bvid", bvid));
+        String cid = view.optString("cid", "");
+        check(cid.matches("[1-9][0-9]*"), "Anonymous real video metadata returns a valid CID");
+        JSONObject data = client.get("/x/player/wbi/playurl", map("bvid", bvid, "cid", cid,
+                "qn", "127", "fnval", "4048", "fnver", "0", "fourk", "1"));
+        List<Integer> qualities = PlaybackQuality.available(data);
+        check(!qualities.isEmpty(), "Anonymous real playback exposes at least one usable quality");
+        JSONObject dash = data.optJSONObject("dash");
+        check(dash != null, "Anonymous real playback returns DASH tracks");
+        for (int quality : qualities) {
+            String manifest = Dash.createExact(dash, quality);
+            check(manifest.contains("id=\"video_" + quality + "\""), "Real quality produces an exact manifest");
+            check(manifest.contains("contentType=\"audio\""), "Real quality retains a usable audio representation");
+        }
+        check(!client.hasSession(), "Live playback probe remains anonymous");
+        System.out.println("BiliClient live playback smoke: qualities=" + qualities);
+    }
+
+    private static PlaybackFixture playback(boolean pgc, String quality, JSONObject data) throws Exception {
+        return new PlaybackFixture(pgc ? "/pgc/player/web/v2/playurl" : "/x/player/wbi/playurl",
+                playbackParams(pgc, quality), new JSONObject().put("code", 0)
+                .put(pgc ? "result" : "data", pgc ? new JSONObject().put("video_info", data) : data));
+    }
+
+    private static Map<String, String> playbackParams(boolean pgc, String quality) {
+        Map<String, String> result = map("qn", quality, "fnval", "4048", "fnver", "0", "fourk", "1");
+        if (pgc) result.put("ep_id", "123");
+        else { result.put("bvid", "BV1xx411c7mD"); result.put("cid", "123"); }
+        return result;
+    }
+
+    private static JSONObject playbackDurl(int quality) throws Exception {
+        return new JSONObject().put("quality", quality).put("durl", new JSONArray().put(new JSONObject()
+                .put("url", "https://test.bilivideo.com/synthetic-video.mp4")));
+    }
+
+    private static JSONObject playbackDash() throws Exception {
+        return new JSONObject().put("quality", 80).put("dash", new JSONObject().put("duration", 30)
+                .put("video", new JSONArray().put(playbackTrack(64, false)).put(playbackTrack(80, false))
+                        .put(playbackTrack(120, false)))
+                .put("audio", new JSONArray().put(playbackTrack(30280, true))));
+    }
+
+    private static JSONObject playbackTrack(int quality, boolean audio) throws Exception {
+        return new JSONObject().put("id", quality).put("bandwidth", audio ? 192000 : 2000000)
+                .put("codecs", audio ? "mp4a.40.2" : quality == 120 ? "hev1.1.6.L153.90" : "avc1.640028")
+                .put("mimeType", audio ? "audio/mp4" : "video/mp4")
+                .put("baseUrl", "https://test.bilivideo.com/synthetic-track.m4s")
+                .put("SegmentBase", new JSONObject().put("Initialization", "0-733").put("indexRange", "734-2000"));
+    }
+
+    private static String readManifest(JSONObject player) throws Exception {
+        equal(0, player.getInt("parse"), "Native playback skips remote parsing");
+        URL url = new URL(player.getString("url"));
+        equal("127.0.0.1", url.getHost(), "Callback returns device-local MPD URL");
+        check(url.getPath().endsWith(".mpd"), "Callback keeps TVBox-compatible MPD URL");
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(3000);
+        connection.setReadTimeout(3000);
+        try (InputStream input = connection.getInputStream()) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        } finally { connection.disconnect(); }
+    }
+
+    /** Real spider callback plus real BiliClient signing, with a synthetic HTTP transport. */
+    private static final class PlaybackFixture {
+        final BiliStudy spider = new BiliStudy();
+        final FakeConnection response;
+        int requests;
+
+        PlaybackFixture(String path, Map<String, String> expected, JSONObject envelope) throws Exception {
+            response = new FakeConnection("https://api.bilibili.com" + path, 200, envelope.toString());
+            BiliClient client = new BiliClient(memoryPreferences(new LinkedHashMap<>()), url -> {
+                requests++;
+                equal("api.bilibili.com", url.getHost(), "Playback callback uses official API host");
+                equal(path, url.getPath(), "Playback callback uses correct UGC/PGC endpoint");
+                Map<String, String> query = new LinkedHashMap<>();
+                for (String pair : url.getQuery().split("&")) {
+                    String[] parts = pair.split("=", 2);
+                    query.put(URLDecoder.decode(parts[0], "UTF-8"), URLDecoder.decode(parts[1], "UTF-8"));
+                }
+                for (Map.Entry<String, String> value : expected.entrySet())
+                    equal(value.getValue(), query.get(value.getKey()), "Playback wire parameter " + value.getKey());
+                boolean signed = path.contains("/wbi/");
+                equal(expected.size() + (signed ? 2 : 0), query.size(), "Playback query contains only expected parameters and signature");
+                if (signed) {
+                    check(query.get("w_rid").matches("[0-9a-f]{32}"), "UGC callback carries a WBI signature");
+                    check(Math.abs(System.currentTimeMillis() / 1000L - Long.parseLong(query.get("wts"))) <= 2,
+                            "UGC callback carries current WBI timestamp");
+                }
+                return response;
+            });
+            Field mixin = BiliClient.class.getDeclaredField("mixinKey");
+            mixin.setAccessible(true);
+            mixin.set(client, "ea1db124af3c7062474693fa704f4ff8");
+            Field expires = BiliClient.class.getDeclaredField("mixinExpires");
+            expires.setAccessible(true);
+            expires.setLong(client, Long.MAX_VALUE);
+            Field dependency = BiliStudy.class.getDeclaredField("client");
+            dependency.setAccessible(true);
+            dependency.set(spider, client);
+        }
+
+        void complete(int count) {
+            equal(count, requests, "Playback callback makes exactly the expected number of requests");
+            if (count > 0) check(response.disconnected, "Playback callback releases API connection");
+        }
     }
 
     /** All endpoints are fake; these transactions never leave the JVM. */

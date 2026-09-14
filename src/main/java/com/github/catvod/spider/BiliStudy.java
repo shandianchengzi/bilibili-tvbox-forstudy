@@ -9,7 +9,7 @@ import android.widget.Toast;
 
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.spider.bili.BiliClient;
-import com.github.catvod.spider.bili.Dash;
+import com.github.catvod.spider.bili.PlaybackQuality;
 import com.github.catvod.spider.bili.LocalServer;
 import com.github.catvod.spider.bili.VideoMetadata;
 import com.github.catvod.spider.bili.QrLoginDialog;
@@ -190,36 +190,47 @@ public class BiliStudy extends Spider {
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         try {
             if (id.startsWith("noop")) throw new IllegalStateException("扫码成功后重新加载源配置或重启 TVBox，再进入个人分类");
-            JSONObject data;
-            if (id.startsWith("playep:")) {
-                data = client.get("/pgc/player/web/v2/playurl", params("ep_id", digits(id.substring(7)), "qn", "80", "fnval", "4048", "fnver", "0", "fourk", "0"));
-                if (data.has("video_info")) data = data.getJSONObject("video_info");
-            } else {
-                String[] parts = id.split(":");
-                if (parts.length < 2 || !parts[0].equals("play")) throw new IllegalArgumentException("播放编号无效");
-                String bvid = checkedBvid(parts[1]);
-                String cid = parts.length > 2 && !parts[2].equals("0") ? digits(parts[2]) : client.get("/x/web-interface/wbi/view", params("bvid", bvid)).getString("cid");
-                data = client.get("/x/player/wbi/playurl", params("bvid", bvid, "cid", cid, "qn", "80", "fnval", "4048", "fnver", "0", "fourk", "0"));
-            }
-            if (data.optBoolean("is_drm", false) || data.optInt("is_drm", 0) == 1)
-                throw new IllegalStateException("该内容受 DRM 保护，请使用 Bilibili 官方客户端观看");
-            JSONObject headers = new JSONObject(BiliClient.playbackHeaders());
-            JSONArray durl = data.optJSONArray("durl");
-            if (durl != null && durl.length() == 1) {
-                return new JSONObject().put("parse", 0).put("url", mediaUrl(durl.getJSONObject(0).getString("url")))
-                    .put("header", headers).toString();
-            }
-            JSONObject dash = data.optJSONObject("dash");
-            if (dash == null) throw new IllegalStateException("没有可播放音视频流；可能需要登录、购买或不在授权地区");
-            String mpd = Dash.create(dash, 80);
-            String local = LocalServer.get().put(mpd.getBytes("UTF-8"), "application/dash+xml");
-            headers.put("TVBox-Format", "dash");
-            return new JSONObject().put("parse", 0).put("url", local).put("header", headers)
-                .put("playUrl", "").put("format", "application/dash+xml").put("jx", 0).put("type", "dash").toString();
+            int quality = PlaybackQuality.requested(id);
+            JSONObject data = playData(PlaybackQuality.baseId(id), quality);
+            return PlaybackQuality.player(data, quality).toString();
         } catch (Exception e) {
             toast(friendly(e));
             return new JSONObject().put("parse", 0).put("url", "").put("msg", friendly(e)).toString();
         }
+    }
+
+    private JSONObject playData(String id, int quality) throws Exception {
+        String qn = String.valueOf(quality > 0 ? quality : 80);
+        if (id.startsWith("playep:")) {
+            JSONObject data = client.get("/pgc/player/web/v2/playurl", params("ep_id", digits(id.substring(7)),
+                    "qn", qn, "fnval", "4048", "fnver", "0", "fourk", "1"));
+            return data.has("video_info") ? data.getJSONObject("video_info") : data;
+        }
+        String[] parts = id.split(":", -1);
+        if (parts.length < 2 || parts.length > 3 || !parts[0].equals("play"))
+            throw new IllegalArgumentException("播放编号无效");
+        String bvid = checkedBvid(parts[1]);
+        String cid = parts.length > 2 && !parts[2].equals("0") ? digits(parts[2])
+                : client.get("/x/web-interface/wbi/view", params("bvid", bvid)).getString("cid");
+        return client.get("/x/player/wbi/playurl", params("bvid", bvid, "cid", cid,
+                "qn", qn, "fnval", "4048", "fnver", "0", "fourk", "1"));
+    }
+
+    /** A single probe populates source-line choices without persisting signed media URLs. */
+    private JSONObject qualityChoices(JSONObject vod) throws Exception {
+        String firstLine = vod.optString("vod_play_url").split("\\$\\$\\$", -1)[0];
+        String firstEpisode = firstLine.split("#", -1)[0];
+        int delimiter = firstEpisode.indexOf('$');
+        if (delimiter < 0) return vod;
+        try {
+            JSONObject data = playData(firstEpisode.substring(delimiter + 1), PlaybackQuality.MAX_REQUEST);
+            PlaybackQuality.addChoices(vod, data);
+        } catch (Exception ignored) {
+            // A failed quality probe must not hide descriptions or the original episode list.
+            vod.put("vod_content", vod.optString("vod_content")
+                    + "\n\n暂时无法获取可选清晰度，仍可直接播放；需要手动选画质时请重新进入详情页。");
+        }
+        return vod;
     }
 
     public boolean isVideoFormat(String url) { return url != null && (url.contains(".mpd") || url.contains(".m4s") || url.contains(".mp4")); }
@@ -374,7 +385,7 @@ public class BiliStudy extends Spider {
                 if (!tracks.isEmpty()) { names.add(label("合集 · " + section.optString("title", collection.optString("title")))); lines.add(join(tracks, "#")); }
             }
         }
-        return vod.put("vod_play_from", join(names, "$$$")).put("vod_play_url", join(lines, "$$$"));
+        return qualityChoices(vod.put("vod_play_from", join(names, "$$$")).put("vod_play_url", join(lines, "$$$")));
     }
 
     private JSONObject seasonDetail(String key, String value) throws Exception {
@@ -390,7 +401,7 @@ public class BiliStudy extends Spider {
             List<String> tracks = pgcEpisodes(section.optJSONArray("episodes"));
             if (!tracks.isEmpty()) { names.add(label(section.optString("title", "花絮"))); lines.add(join(tracks, "#")); }
         }
-        return vod.put("vod_play_from", join(names, "$$$")).put("vod_play_url", join(lines, "$$$"));
+        return qualityChoices(vod.put("vod_play_from", join(names, "$$$")).put("vod_play_url", join(lines, "$$$")));
     }
 
     private List<String> pgcEpisodes(JSONArray a) throws Exception {
@@ -559,6 +570,7 @@ public class BiliStudy extends Spider {
     }
 
     private void toast(final String message) {
+        if (context == null) return;
         new Handler(Looper.getMainLooper()).post(new Runnable() { public void run() { Toast.makeText(context, message, Toast.LENGTH_LONG).show(); } });
     }
 
@@ -589,14 +601,6 @@ public class BiliStudy extends Spider {
     private static boolean isBvid(String s) { return s != null && s.matches("BV[0-9A-Za-z]{10}"); }
     private static String checkedBvid(String s) { if (!isBvid(s)) throw new IllegalArgumentException("BV 编号无效"); return s; }
     private static String digits(String s) { if (s == null || !s.matches("[0-9]{1,20}")) throw new IllegalArgumentException("数字编号无效"); return s; }
-    private static String mediaUrl(String s) throws Exception {
-        URL u = new URL(s);
-        String host = u.getHost().toLowerCase(java.util.Locale.ROOT);
-        if (!("https".equals(u.getProtocol()) || "http".equals(u.getProtocol())) || u.getUserInfo() != null
-            || !(host.endsWith(".bilivideo.com") || host.endsWith(".bilivideo.cn") || host.endsWith(".bilivideo.net") || host.endsWith(".akamaized.net") || host.endsWith(".hdslb.com")))
-            throw new IllegalArgumentException("非 Bilibili 媒体地址");
-        return s;
-    }
     private static String join(List<String> a, String separator) { StringBuilder s = new StringBuilder(); for (String v : a) { if (s.length() > 0) s.append(separator); s.append(v); } return s.toString(); }
     private static Map<String, String> params(String... pairs) { Map<String, String> out = new LinkedHashMap<>(); for (int i = 0; i < pairs.length; i += 2) out.put(pairs[i], pairs[i + 1]); return out; }
 }

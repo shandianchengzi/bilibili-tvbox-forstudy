@@ -7,6 +7,11 @@ import org.json.JSONObject;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** Converts the authorized playurl response into a static ISO-BMFF DASH manifest. */
 public final class Dash {
@@ -16,16 +21,42 @@ public final class Dash {
         return create(dash, 80);
     }
 
-    /** Selects available AVC first, then the closest quality at or below the request. */
+    /** Selects the closest quality at or below the request, then a compatible codec. */
     public static String create(JSONObject dash, int preferredQuality) throws JSONException {
+        return create(dash, preferredQuality, false);
+    }
+
+    /** Emits only the requested quality; never silently substitutes a different resolution. */
+    public static String createExact(JSONObject dash, int quality) throws JSONException {
+        return create(dash, quality, true);
+    }
+
+    /** Available qualities, highest first, with the same track validation used by createExact. */
+    public static List<Integer> availableQualities(JSONObject dash) {
+        List<Integer> result = new ArrayList<>();
+        if (dash == null || !finitePositive(dash.optDouble("duration", 0))
+                || selectAudio(dash.optJSONArray("audio")) == null) return result;
+        JSONArray values = dash.optJSONArray("video");
+        if (values == null) return result;
+        Set<Integer> qualities = new TreeSet<>(Collections.reverseOrder());
+        for (int index = 0; index < values.length(); index++) {
+            JSONObject value = values.optJSONObject(index);
+            if (usable(value, "video")) qualities.add(value.optInt("id", 0));
+        }
+        result.addAll(qualities);
+        return result;
+    }
+
+    private static String create(JSONObject dash, int preferredQuality, boolean exact) throws JSONException {
         if (dash == null) throw new JSONException("播放接口没有返回 DASH 数据");
         double duration = dash.optDouble("duration", 0);
         if (!finitePositive(duration)) throw new JSONException("DASH 时长无效");
         double buffer = dash.optDouble("minBufferTime", dash.optDouble("min_buffer_time", 1.5));
         if (!finitePositive(buffer)) buffer = 1.5;
-        JSONObject video = selectVideo(dash.optJSONArray("video"), preferredQuality);
+        JSONObject video = selectVideo(dash.optJSONArray("video"), preferredQuality, exact);
         JSONObject audio = selectAudio(dash.optJSONArray("audio"));
-        if (video == null) throw new JSONException("当前账号没有可播放的视频轨道");
+        if (video == null) throw new JSONException(exact
+                ? "当前账号没有所选清晰度的视频轨道：" + preferredQuality : "当前账号没有可播放的视频轨道");
         if (audio == null) throw new JSONException("播放接口没有返回可用的音频轨道");
         StringBuilder xml = new StringBuilder(4096);
         xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
@@ -39,17 +70,12 @@ public final class Dash {
         return xml.append("</Period>\n</MPD>\n").toString();
     }
 
-    private static JSONObject selectVideo(JSONArray values, int preferred) {
+    private static JSONObject selectVideo(JSONArray values, int preferred, boolean exact) {
         if (values == null || values.length() == 0) return null;
-        boolean hasAvc = false;
-        for (int index = 0; index < values.length(); index++) {
-            JSONObject value = values.optJSONObject(index);
-            if (usable(value) && isAvc(value)) hasAvc = true;
-        }
         JSONObject best = null;
         for (int index = 0; index < values.length(); index++) {
             JSONObject value = values.optJSONObject(index);
-            if (!usable(value) || (hasAvc && !isAvc(value))) continue;
+            if (!usable(value, "video") || (exact && value.optInt("id", 0) != preferred)) continue;
             if (best == null || betterQuality(value, best, preferred)) best = value;
         }
         return best;
@@ -58,7 +84,12 @@ public final class Dash {
     private static boolean betterQuality(JSONObject value, JSONObject best, int preferred) {
         int quality = value.optInt("id", 0);
         int previous = best.optInt("id", 0);
-        if (quality == previous) return value.optLong("bandwidth", 0) > best.optLong("bandwidth", 0);
+        if (quality == previous) {
+            int codec = codecPreference(value);
+            int previousCodec = codecPreference(best);
+            return codec < previousCodec || (codec == previousCodec
+                    && value.optLong("bandwidth", 0) > best.optLong("bandwidth", 0));
+        }
         if (preferred <= 0) return quality > previous;
         boolean lower = quality <= preferred;
         boolean previousLower = previous <= preferred;
@@ -71,7 +102,7 @@ public final class Dash {
         JSONObject best = null;
         for (int index = 0; index < values.length(); index++) {
             JSONObject value = values.optJSONObject(index);
-            if (!usable(value)) continue;
+            if (!usable(value, "audio")) continue;
             boolean aac = value.optString("codecs", "").startsWith("mp4a");
             boolean previousAac = best != null && best.optString("codecs", "").startsWith("mp4a");
             if (best == null || (aac && !previousAac)
@@ -81,23 +112,33 @@ public final class Dash {
         return best;
     }
 
-    private static boolean isAvc(JSONObject value) {
-        return value.optInt("codecid", 0) == 7 || value.optString("codecs", "").startsWith("avc");
+    private static int codecPreference(JSONObject value) {
+        int id = value.optInt("codecid", 0);
+        String codec = value.optString("codecs", "");
+        if (id == 7 || codec.startsWith("avc")) return 0;
+        if (id == 12 || codec.startsWith("hev1") || codec.startsWith("hvc1")) return 1;
+        if (id == 13 || codec.startsWith("av01")) return 2;
+        return 3;
     }
 
-    private static boolean usable(JSONObject value) {
-        if (value == null || value.optLong("bandwidth", 0) <= 0 || value.optString("codecs", "").isEmpty())
+    private static boolean usable(JSONObject value, String type) {
+        if (value == null || value.optInt("id", 0) <= 0 || value.optLong("bandwidth", 0) <= 0
+                || value.optString("codecs", "").isEmpty())
             return false;
         JSONObject segment = value.optJSONObject("SegmentBase");
         if (segment == null) segment = value.optJSONObject("segment_base");
-        return segment != null && !field(value, "baseUrl", "base_url").isEmpty()
-                && validRange(field(segment, "Initialization", "initialization"))
-                && validRange(field(segment, "indexRange", "index_range"));
+        if (segment == null || !validRange(field(segment, "Initialization", "initialization"))
+                || !validRange(field(segment, "indexRange", "index_range"))) return false;
+        String mime = field(value, "mimeType", "mime_type");
+        if (!mime.isEmpty() && !mime.equals(type + "/mp4")) return false;
+        try {
+            escape(mediaUrl(value));
+            escape(value.optString("codecs", ""));
+            return true;
+        } catch (JSONException error) { return false; }
     }
 
-    private static void representation(StringBuilder xml, JSONObject value, String type) throws JSONException {
-        JSONObject segment = value.optJSONObject("SegmentBase");
-        if (segment == null) segment = value.optJSONObject("segment_base");
+    private static String mediaUrl(JSONObject value) throws JSONException {
         String url = field(value, "baseUrl", "base_url");
         if (url.startsWith("//")) url = "https:" + url;
         if (url.startsWith("http://")) url = "https://" + url.substring(7);
@@ -108,6 +149,13 @@ public final class Dash {
         } catch (URISyntaxException error) {
             throw new JSONException("DASH 媒体地址格式无效");
         }
+        return url;
+    }
+
+    private static void representation(StringBuilder xml, JSONObject value, String type) throws JSONException {
+        JSONObject segment = value.optJSONObject("SegmentBase");
+        if (segment == null) segment = value.optJSONObject("segment_base");
+        String url = mediaUrl(value);
         String mime = field(value, "mimeType", "mime_type");
         if (mime.isEmpty()) mime = type + "/mp4";
         if (!mime.equals(type + "/mp4")) throw new JSONException("DASH 媒体类型不受支持");

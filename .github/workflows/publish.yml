@@ -54,15 +54,16 @@ jobs:
       - name: Compile and validate native TVBox plugin
         run: bash scripts/build.sh
 
-      - name: Probe anonymous Bilibili QR generation and waiting status
+      - name: Probe anonymous Bilibili QR and playable video qualities
         if: github.event_name != 'pull_request'
         continue-on-error: ${{ github.event_name == 'schedule' }}
         timeout-minutes: 2
         env:
           BILI_QR_LIVE_SMOKE: '1'
+          BILI_PLAYBACK_LIVE_SMOKE: '1'
         run: >-
           java -ea
-          -cp "build/test-classes:build/classes:build/stubs:.deps/json-20240303.jar:$ANDROID_SDK_ROOT/platforms/android-35/android.jar"
+          -cp "build/test-classes:build/classes:build/stubs:.deps/json-20240303.jar:.deps/zxing-core-3.5.3.jar:$ANDROID_SDK_ROOT/platforms/android-35/android.jar"
           com.github.catvod.spider.bili.BiliClientTest
 
       - name: Restore last known catalog
