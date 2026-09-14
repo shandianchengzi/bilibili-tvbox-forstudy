@@ -97,7 +97,7 @@ public final class VideoFilters {
         return seconds >= 3600;
     }
 
-    private static long durationSeconds(Object value) {
+    public static long durationSeconds(Object value) {
         long integer = exactCount(value);
         if (integer >= 0) return integer;
         if (!(value instanceof String)) return -1;

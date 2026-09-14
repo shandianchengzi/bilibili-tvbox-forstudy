@@ -13,6 +13,7 @@ public final class PgcFiltersTest {
     public static void main(String[] args) throws Exception {
         publicDefinitions();
         upstreamParams();
+        movieReleaseOrder();
         independentFilterSnapshots();
         mergeOrdering();
         System.out.println("PgcFiltersTest: " + assertions + " assertions passed");
@@ -34,6 +35,22 @@ public final class PgcFiltersTest {
         equal("2", category.getJSONObject(0).getJSONArray("value").getJSONObject(0).getString("v"), "default is most viewed");
         equal("4,6", category.getJSONObject(1).getJSONArray("value").getJSONObject(2).getString("v"), "official membership parameter");
         check(!all.toString().contains("播放量"), "no unsupported exact view-count range is advertised");
+    }
+
+    private static void movieReleaseOrder() throws Exception {
+        JSONArray movieOrder = PgcFilters.forType("2").getJSONObject(0).getJSONArray("value");
+        equal(4, movieOrder.length(), "Movies add one release-date choice");
+        equal("最近上映", movieOrder.getJSONObject(3).getString("n"), "Movie release label");
+        equal("6", movieOrder.getJSONObject(3).getString("v"), "Bilibili release-date order");
+        Map<String, String> selected = new HashMap<>();
+        selected.put("order", "6"); selected.put("season_status", "1");
+        equal("6", PgcFilters.params("2", 2, selected).get("order"), "Movie page forwards release ordering");
+        equal("0", PgcFilters.params("2", 2, selected).get("sort"), "Newest release first");
+        equal("1", PgcFilters.params("2", 2, selected).get("season_status"), "Release ordering combines with payment selection");
+        for (String type : new String[] {"7", "3", "4", "5", "1"}) {
+            equal(3, PgcFilters.forType(type).getJSONObject(0).getJSONArray("value").length(), "Other types retain their existing choices");
+            equal("2", PgcFilters.params(type, 1, selected).get("order"), "Unsupported cross-type release order is not forwarded");
+        }
     }
 
     private static void upstreamParams() {

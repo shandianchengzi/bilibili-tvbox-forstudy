@@ -40,6 +40,19 @@ public final class PgcFilters {
         return definitions;
     }
 
+    /** Release-date ordering belongs to the movie index, not every PGC type. */
+    public static JSONArray forType(String type) throws Exception {
+        JSONArray filters = definitions(false);
+        if ("2".equals(type)) {
+            for (int i = 0; i < filters.length(); i++) {
+                JSONObject filter = filters.getJSONObject(i);
+                if ("order".equals(filter.optString("key")))
+                    filter.getJSONArray("value").put(value("最近上映", "6"));
+            }
+        }
+        return filters;
+    }
+
     /** Only values supported by every official index are forwarded to Bilibili. */
     public static Map<String, String> params(String type, int page, Map<String, String> selected) {
         if (!Arrays.asList(TYPES).contains(type)) throw new IllegalArgumentException("未知影视类型");
@@ -48,7 +61,7 @@ public final class PgcFilters {
         params.put("type", "1");
         params.put("page", String.valueOf(Math.max(1, page)));
         params.put("pagesize", "20");
-        params.put("order", order(selected));
+        params.put("order", "2".equals(type) && selected != null && "6".equals(selected.get("order")) ? "6" : order(selected));
         params.put("sort", "0");
         params.put("season_status", status(selected));
         return params;

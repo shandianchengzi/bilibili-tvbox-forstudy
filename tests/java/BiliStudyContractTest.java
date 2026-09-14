@@ -109,10 +109,16 @@ public final class BiliStudyContractTest {
         for (String type : Arrays.asList("2", "7", "3", "4", "5", "1")) {
             JSONArray options = filters.getJSONArray("pgc:" + type);
             check(options.length() == 2, "Each PGC category exposes its supported sort and payment filters");
-            assertValues(options, "order", "2", "0", "4");
+            if ("2".equals(type)) assertValues(options, "order", "2", "0", "4", "6");
+            else assertValues(options, "order", "2", "0", "4");
             assertValues(options, "season_status", "-1", "1", "4,6");
         }
-        assertValues(filters.getJSONArray("favorites"), "plays", "all", "10k_100k", "100k_plus", "1k_10k", "lt_1k");
+        for (String personal : Arrays.asList("dynamic", "favorites", "history")) {
+            JSONArray options = filters.getJSONArray(personal);
+            assertValues(options, "order", "totalrank", "click", "pubdate", "dm", "stow");
+            assertValues(options, "duration", "0", "4", "3", "2", "1");
+            assertValues(options, "plays", "all", "10k_100k", "100k_plus", "1k_10k", "lt_1k");
+        }
     }
 
     /** Filter a complete local directory before pagination; the first 25 entries cannot match. */

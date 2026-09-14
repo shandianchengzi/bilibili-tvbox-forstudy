@@ -84,6 +84,9 @@ public final class BiliClient {
     }
 
     /** Local session presence, not a claim that a server-side session is still valid. */
+    /** Monotonic local session identity; never contains a credential. */
+    public long sessionVersion() { return epoch(); }
+
     public boolean hasSession() { return !cookieValue("SESSDATA").isEmpty(); }
     public boolean isLoggedIn() { return hasSession(); }
     public String userId() { return cookieValue("DedeUserID"); }

@@ -51,6 +51,7 @@ public final class BiliClientTest {
         taggedPlayFilterTransactions();
         if ("1".equals(System.getenv("BILI_QR_LIVE_SMOKE"))) liveQrSmoke();
         if ("1".equals(System.getenv("BILI_PLAYBACK_LIVE_SMOKE"))) reportLivePlaybackSmoke();
+        if ("1".equals(System.getenv("BILI_SEARCH_LIVE_SMOKE"))) liveMovieReleaseSmoke();
         System.out.println("BiliClientTest: " + assertions + " assertions passed");
     }
 
@@ -541,6 +542,30 @@ public final class BiliClientTest {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    /** One normal public request verifies the official release-date sorting parameter. */
+    private static void liveMovieReleaseSmoke() throws Exception {
+        try {
+            BiliClient anonymous = new BiliClient(memoryPreferences(new LinkedHashMap<>()));
+            JSONObject data = anonymous.get("/pgc/season/index/result",
+                    PgcFilters.params("2", 1, map("order", "6", "season_status", "-1")));
+            JSONArray rows = data.optJSONArray("list");
+            check(rows != null, "Live movie release index exposes a list");
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                check(row.optLong("season_id") > 0, "Release-index movies have playable season identities");
+                if (row.has("order_type")) equal("6", row.optString("order_type"), "Release index confirms order type");
+            }
+            System.out.println("BiliClient live movie release smoke: order=6 rows=" + rows.length());
+        } catch (IOException failure) {
+            boolean limited = failure instanceof BiliClient.ApiException
+                    && Arrays.asList(-412, -352, -509).contains(((BiliClient.ApiException) failure).code);
+            String message = failure.getMessage();
+            limited |= message != null && (message.contains("HTTP 412") || message.contains("HTTP 429"));
+            if (!limited) throw failure;
+            System.out.println("::warning::BiliClient live movie release smoke: BLOCKED by Bilibili risk control");
+        }
     }
 
     /** Cloud IP restrictions are reported as blocked, never as a successful playback probe. */
