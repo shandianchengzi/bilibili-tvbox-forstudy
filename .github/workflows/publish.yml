@@ -102,14 +102,15 @@ jobs:
       - name: Mirror built Pages site to Cloudflare
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         continue-on-error: true
-        uses: shandianchengzi/skill/manage-github-pages/cloudflare-backup@4c1bf8604fc78dabb0babc83bfa0e2c1fa645327
-        with:
-          directory: dist/site
-          project: sdz-bilibili-tvbox-forstudy
-          site-prefix: bilibili-tvbox-forstudy
-          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
+        env:
+          MIRROR_DIR: dist/site
+          MIRROR_PROJECT: sdz-bilibili-tvbox-forstudy
+          MIRROR_PREFIX: bilibili-tvbox-forstudy
+          MIRROR_BRANCH: main
+          MIRROR_LARGE_POLICY: fail
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash .github/scripts/cloudflare-pages-backup.sh
       - name: Save validated public catalog
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v6
