@@ -99,6 +99,16 @@ jobs:
         run: |
           python3 scripts/build_site.py
           python3 scripts/verify.py --site dist/site
+      - name: Mirror built Pages site to Cloudflare
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: shandianchengzi/skill/manage-github-pages/cloudflare-backup@4c1bf8604fc78dabb0babc83bfa0e2c1fa645327
+        with:
+          directory: dist/site
+          project: sdz-bilibili-tvbox-forstudy
+          site-prefix: bilibili-tvbox-forstudy
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Save validated public catalog
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
